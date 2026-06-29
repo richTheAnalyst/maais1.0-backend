@@ -1,0 +1,641 @@
+// MAAIS - Academic Audit & Intervention System
+// Prisma Schema for Neon (PostgreSQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  HEADMASTER
+  HOD // Head of Department
+  TEACHER
+  STUDENT
+  PARENT
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum SubjectType {
+  CORE
+  ELECTIVE
+}
+
+enum GradeRemark {
+  EXCELLENT
+  VERY_GOOD
+  GOOD
+  CREDIT
+  PASS
+  WEAK_PASS
+  FAILURE
+}
+
+enum TermNumber {
+  TERM_1
+  TERM_2
+  TERM_3
+}
+
+enum ClassLevel {
+  FORM_1
+  FORM_2
+  FORM_3
+}
+
+enum PromotionStatus {
+  PROMOTED
+  REPEATED
+  GRADUATED
+  WITHDRAWN
+}
+
+enum DocumentType {
+  REPORT_CARD
+  TRANSCRIPT
+}
+
+enum NotificationChannel {
+  APP
+  SMS
+  EMAIL
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOCK
+  UNLOCK
+  PROMOTE
+  GRADE_CORRECTION
+}
+
+///
+enum InterventionStatus {
+  ACTIVE
+  IN_PROGRESS
+  RESOLVED
+}
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+}
+// ─────────────────────────────────────────────
+// USERS & AUTHENTICATION
+// ─────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  phone        String?   @unique
+  passwordHash String
+  role         Role
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Polymorphic profile
+  staffProfile   StaffProfile?
+  studentProfile StudentProfile?
+  parentProfile  ParentProfile?
+
+  // Auth tokens
+  refreshTokens RefreshToken[]
+
+  // Audit
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────────
+// PROFILES
+// ─────────────────────────────────────────────
+
+model StaffProfile {
+  id           String      @id @default(uuid())
+  userId       String      @unique
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  staffId      String      @unique // e.g. TCH-2024-001
+  firstName    String
+  lastName     String
+  middleName   String?
+  gender       Gender
+  dateOfBirth  DateTime?
+  phone        String?
+  photoUrl     String?
+  hiredAt      DateTime    @default(now())
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  // Teaching assignments
+  teachingAssignments TeachingAssignment[]
+  classTeacher        ClassSection?        @relation("ClassTeacher")
+  timetableEntries    TimetableEntry[]
+  // Notifications sent to or about this staff
+  notifications       Notification[]
+
+  @@map("staff_profiles")
+}
+
+model StudentProfile {
+  id             String        @id @default(uuid())
+  userId         String        @unique
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  indexNumber    String        @unique // e.g. MSHTS/2024/001
+  firstName      String
+  lastName       String
+  middleName     String?
+  gender         Gender
+  dateOfBirth    DateTime?
+  photoUrl       String?
+  admissionDate  DateTime      @default(now())
+  currentClassId String?
+  currentClass   ClassSection? @relation(fields: [currentClassId], references: [id])
+  departmentId   String?
+  department     Department?   @relation(fields: [departmentId], references: [id])
+
+  // Academic records
+  grades        GradeEntry[]
+  attendance    AttendanceRecord[]
+  promotions    PromotionRecord[]
+  reportCards   ReportCard[]
+  notifications Notification[]
+
+  // Parent link
+  parentLinks StudentParentLink[]
+  behaviors   StudentBehavior[]
+  characterTraits CharacterTrait[]
+  interventionAlerts InterventionAlert[]
+
+  // Archived after graduation
+  archivedAt DateTime?
+
+  @@map("student_profiles")
+}
+
+model ParentProfile {
+  id         String  @id @default(uuid())
+  userId     String  @unique
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName  String
+  lastName   String
+  phone      String
+  email      String?
+  occupation String?
+
+  studentLinks StudentParentLink[]
+
+  @@map("parent_profiles")
+}
+
+model StudentParentLink {
+  id           String         @id @default(uuid())
+  studentId    String
+  student      StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parentId     String
+  parent       ParentProfile  @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  relationship String // "Father", "Mother", "Guardian"
+  isPrimary    Boolean        @default(false)
+
+  @@unique([studentId, parentId])
+  @@map("student_parent_links")
+}
+
+// ─────────────────────────────────────────────
+// ACADEMIC ARCHITECT MODULE
+// ─────────────────────────────────────────────
+
+model AcademicYear {
+  id        String   @id @default(uuid())
+  label     String   @unique // e.g. "2024/2025"
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  terms      Term[]
+  promotions PromotionRecord[]
+
+  @@map("academic_years")
+}
+
+model Term {
+  id             String       @id @default(uuid())
+  academicYearId String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  termNumber     TermNumber
+  startDate      DateTime
+  endDate        DateTime
+  isActive       Boolean      @default(false)
+  isLocked       Boolean      @default(false) // Locked after reports are released
+
+  grades      GradeEntry[]
+  attendance  AttendanceRecord[]
+  reportCards ReportCard[]
+
+  @@unique([academicYearId, termNumber])
+  @@map("terms")
+}
+
+model Department {
+  id          String   @id @default(uuid())
+  name        String   @unique // e.g. "Science", "General Arts"
+  code        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  staff    StaffProfile[]
+  subjects Subject[]
+  students StudentProfile[]
+
+  @@map("departments")
+}
+
+model Subject {
+  id           String      @id @default(uuid())
+  name         String
+  code         String      @unique // e.g. "MATH101"
+  type         SubjectType
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  description  String?
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+
+  // Assignments and grades
+  teachingAssignments TeachingAssignment[]
+  grades              GradeEntry[]
+  timetableEntries     TimetableEntry[]
+
+  @@map("subjects")
+}
+
+model ClassSection {
+  id             String        @id @default(uuid())
+  name           String // e.g. "1A", "2B", "3Science"
+  level          ClassLevel
+  capacity       Int           @default(40)
+  classTeacherId String?       @unique
+  classTeacher   StaffProfile? @relation("ClassTeacher", fields: [classTeacherId], references: [id])
+
+  students            StudentProfile[]
+  teachingAssignments TeachingAssignment[]
+  timetableEntries      TimetableEntry[]
+
+  @@unique([name, level])
+  @@map("class_sections")
+}
+
+model TeachingAssignment {
+  id             String       @id @default(uuid())
+  teacherId      String
+  teacher        StaffProfile @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  subjectId      String
+  subject        Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  classSectionId String
+  classSection   ClassSection @relation(fields: [classSectionId], references: [id], onDelete: Cascade)
+  academicYearId String
+
+  @@unique([teacherId, subjectId, classSectionId, academicYearId])
+  @@map("teaching_assignments")
+}
+
+// ─────────────────────────────────────────────
+// GRADING & ASSESSMENT MODULE
+// ─────────────────────────────────────────────
+
+model GradingScheme {
+  id         String          @id @default(uuid())
+  name       String          @unique // e.g. "Standard WAEC GH"
+  isDefault  Boolean         @default(false)
+  boundaries GradeBoundary[]
+
+  @@map("grading_schemes")
+}
+
+model GradeBoundary {
+  id           String        @id @default(uuid())
+  schemeId     String
+  scheme       GradingScheme @relation(fields: [schemeId], references: [id], onDelete: Cascade)
+  grade        String // A1, B2, B3, C4, C5, C6, D7, E8, F9
+  minScore     Float
+  maxScore     Float
+  remark       GradeRemark
+  smartRemarks String[] // Pool of AI-assisted remarks to suggest
+
+  @@map("grade_boundaries")
+}
+
+model GradeEntry {
+  id        String         @id @default(uuid())
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   Subject        @relation(fields: [subjectId], references: [id])
+  termId    String
+  term      Term           @relation(fields: [termId], references: [id])
+
+  // Score breakdown (GH SHS standard)
+  classScore Float? // Out of 30 (continuous assessment)
+  examScore  Float? // Out of 70
+  totalScore Float? // Computed: classScore + examScore
+  grade      String? // A1-F9
+  remark     String? // Selected from smart remarks pool
+  position   Int? // Position in class for this subject
+
+  // Observations (missing = flagged)
+  hasObservation  Boolean @default(false)
+  observationText String?
+
+  // Locking & audit
+  isLocked      Boolean   @default(false)
+  lockedById    String?
+  lockedAt      DateTime?
+  submittedById String?
+  submittedAt   DateTime?
+
+  // Approval
+  isApproved   Boolean   @default(false)
+  approvedById String?
+  approvedAt   DateTime?
+
+  // Corrections tracked
+  corrections GradeCorrection[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([studentId, subjectId, termId])
+  @@map("grade_entries")
+}
+
+model GradeCorrection {
+  id           String     @id @default(uuid())
+  gradeEntryId String
+  gradeEntry   GradeEntry @relation(fields: [gradeEntryId], references: [id], onDelete: Cascade)
+  changedById  String
+  fieldChanged String // "classScore" | "examScore" | "remark"
+  oldValue     String?
+  newValue     String
+  reason       String
+  createdAt    DateTime   @default(now())
+
+  @@map("grade_corrections")
+}
+
+model AttendanceRecord {
+  id          String         @id @default(uuid())
+  studentId   String
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId      String
+  term        Term           @relation(fields: [termId], references: [id])
+  daysPresent Int            @default(0)
+  daysAbsent  Int            @default(0)
+  totalDays   Int
+
+  @@unique([studentId, termId])
+  @@map("attendance_records")
+}
+
+// ─────────────────────────────────────────────
+// COMMS & REPORTS MODULE
+// ─────────────────────────────────────────────
+
+model ReportCard {
+  id           String         @id @default(uuid())
+  studentId    String
+  student      StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId       String
+  term         Term           @relation(fields: [termId], references: [id])
+  documentType DocumentType   @default(REPORT_CARD)
+
+  // Verification
+  systemHash      String  @unique // SHA256 of canonical content
+  qrCodeUrl       String?
+  verificationUrl String?
+
+  // Computed summary
+  totalScore          Float?
+  averageScore        Float?
+  classPosition       Int?
+  classSize           Int?
+  conductGrade        String?
+  headmasterRemarks   String?
+  classTeacherRemarks String?
+
+  // File
+  pdfUrl      String?
+  generatedAt DateTime?
+  releasedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([studentId, termId])
+  @@map("report_cards")
+}
+
+model Transcript {
+  id          String @id @default(uuid())
+  studentId   String
+  indexNumber String // Stored separately for alumni lookups
+
+  systemHash      String  @unique
+  qrCodeUrl       String?
+  verificationUrl String?
+  pdfUrl          String?
+  purpose         String? // "University Application", "Employment"
+  requestedById   String?
+
+  generatedAt DateTime @default(now())
+
+  @@map("transcripts")
+}
+model Notification {
+  id          String              @id @default(uuid())
+  studentId   String?
+  student     StudentProfile?     @relation(fields: [studentId], references: [id])
+  staffId     String?
+  staff       StaffProfile?       @relation(fields: [staffId], references: [id])
+  title       String
+  body        String
+  channel     NotificationChannel
+  isRead      Boolean             @default(false)
+  deliveredAt DateTime?
+  failedAt    DateTime?
+  errorMsg    String?
+  createdAt   DateTime            @default(now())
+  createdById String?
+
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────────
+// ARCHIVE (VAULT) MODULE
+// ─────────────────────────────────────────────
+
+model PromotionRecord {
+  id             String          @id @default(uuid())
+  studentId      String
+  student        StudentProfile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  academicYearId String
+  academicYear   AcademicYear    @relation(fields: [academicYearId], references: [id])
+  fromClass      ClassLevel
+  toClass        ClassLevel? // null if graduated or withdrawn
+  status         PromotionStatus
+  notes          String?
+  performedById  String
+  performedAt    DateTime        @default(now())
+
+  @@map("promotion_records")
+}
+
+// ─────────────────────────────────────────────
+// AUDIT
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id        String      @id @default(uuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+  action    AuditAction
+  entity    String // "GradeEntry", "ReportCard", etc.
+  entityId  String
+  payload   Json? // Before/after snapshot
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime    @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+////
+//======================================
+//new student models
+//-------------------------------
+
+model StudentBehavior {
+  id          String @id @default(uuid())
+  studentId   String
+  punctuality Int?
+  attendance  Int?
+  attitude    Int?
+  conduct     Int?
+
+  remarks      String?
+  recordedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id])
+
+  @@index([studentId])
+  @@map("StudentBehavior")
+}
+
+model CharacterTrait {
+  id               String   @id @default(uuid())
+  studentId        String
+
+  leadership       Int
+  discipline       Int
+  teamwork         Int
+  ethics           Int
+  communication    Int
+  responsibility   Int
+
+  termId           String?
+
+  createdAt        DateTime @default(now())
+
+  student          StudentProfile @relation(fields: [studentId], references: [id])
+
+  @@index([studentId])
+}
+
+model InterventionAlert {
+  id               String   @id @default(uuid())
+
+  studentId        String
+
+  previousAverage  Float
+  currentAverage   Float
+
+  dropPercentage   Float
+
+  status           InterventionStatus
+
+  notes            String?
+
+  createdAt        DateTime @default(now())
+  resolvedAt       DateTime?
+
+  student          StudentProfile @relation(fields: [studentId], references: [id])
+
+  @@index([studentId])
+}
+
+model TimetableEntry {
+  id           String   @id @default(uuid())
+
+  classId      String
+  subjectId    String
+  teacherId    String
+
+  dayOfWeek    DayOfWeek
+
+  startTime    String
+  endTime      String
+
+  room         String?
+
+  createdAt    DateTime @default(now())
+
+  classSection         ClassSection   @relation(fields: [classId], references: [id])
+  subject      Subject  @relation(fields: [subjectId], references: [id])
+  teacher      StaffProfile @relation(fields: [teacherId], references: [id])
+
+  @@map("timetable_entries")
+}
+
+//school settings
+model SchoolSettings {
+  id                      String   @id @default(uuid())
+  clashDetectionEnabled   Boolean  @default(true)
+  departmentColorsEnabled Boolean  @default(true)
+  updatedAt               DateTime @updatedAt
+  updatedById             String?
+
+  @@map("school_settings")
+}
