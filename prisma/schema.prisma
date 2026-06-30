@@ -88,6 +88,7 @@ enum InterventionStatus {
   IN_PROGRESS
   RESOLVED
 }
+
 enum DayOfWeek {
   MONDAY
   TUESDAY
@@ -95,6 +96,7 @@ enum DayOfWeek {
   THURSDAY
   FRIDAY
 }
+
 // ─────────────────────────────────────────────
 // USERS & AUTHENTICATION
 // ─────────────────────────────────────────────
@@ -190,9 +192,9 @@ model StudentProfile {
   notifications Notification[]
 
   // Parent link
-  parentLinks StudentParentLink[]
-  behaviors   StudentBehavior[]
-  characterTraits CharacterTrait[]
+  parentLinks        StudentParentLink[]
+  behaviors          StudentBehavior[]
+  characterTraits    CharacterTrait[]
   interventionAlerts InterventionAlert[]
 
   // Archived after graduation
@@ -293,7 +295,7 @@ model Subject {
   // Assignments and grades
   teachingAssignments TeachingAssignment[]
   grades              GradeEntry[]
-  timetableEntries     TimetableEntry[]
+  timetableEntries    TimetableEntry[]
 
   @@map("subjects")
 }
@@ -308,7 +310,7 @@ model ClassSection {
 
   students            StudentProfile[]
   teachingAssignments TeachingAssignment[]
-  timetableEntries      TimetableEntry[]
+  timetableEntries    TimetableEntry[]
 
   @@unique([name, level])
   @@map("class_sections")
@@ -479,6 +481,7 @@ model Transcript {
 
   @@map("transcripts")
 }
+
 model Notification {
   id          String              @id @default(uuid())
   studentId   String?
@@ -565,65 +568,65 @@ model StudentBehavior {
 }
 
 model CharacterTrait {
-  id               String   @id @default(uuid())
-  studentId        String
+  id        String @id @default(uuid())
+  studentId String
 
-  leadership       Int
-  discipline       Int
-  teamwork         Int
-  ethics           Int
-  communication    Int
-  responsibility   Int
+  leadership     Int
+  discipline     Int
+  teamwork       Int
+  ethics         Int
+  communication  Int
+  responsibility Int
 
-  termId           String?
+  termId String?
 
-  createdAt        DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  student          StudentProfile @relation(fields: [studentId], references: [id])
+  student StudentProfile @relation(fields: [studentId], references: [id])
 
   @@index([studentId])
 }
 
 model InterventionAlert {
-  id               String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  studentId        String
+  studentId String
 
-  previousAverage  Float
-  currentAverage   Float
+  previousAverage Float
+  currentAverage  Float
 
-  dropPercentage   Float
+  dropPercentage Float
 
-  status           InterventionStatus
+  status InterventionStatus
 
-  notes            String?
+  notes String?
 
-  createdAt        DateTime @default(now())
-  resolvedAt       DateTime?
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
 
-  student          StudentProfile @relation(fields: [studentId], references: [id])
+  student StudentProfile @relation(fields: [studentId], references: [id])
 
   @@index([studentId])
 }
 
 model TimetableEntry {
-  id           String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  classId      String
-  subjectId    String
-  teacherId    String
+  classId   String
+  subjectId String
+  teacherId String
 
-  dayOfWeek    DayOfWeek
+  dayOfWeek DayOfWeek
 
-  startTime    String
-  endTime      String
+  startTime String
+  endTime   String
 
-  room         String?
+  room String?
 
-  createdAt    DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  classSection         ClassSection   @relation(fields: [classId], references: [id])
-  subject      Subject  @relation(fields: [subjectId], references: [id])
+  classSection ClassSection @relation(fields: [classId], references: [id])
+  subject      Subject      @relation(fields: [subjectId], references: [id])
   teacher      StaffProfile @relation(fields: [teacherId], references: [id])
 
   @@map("timetable_entries")

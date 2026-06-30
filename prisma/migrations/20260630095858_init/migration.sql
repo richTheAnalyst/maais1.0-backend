@@ -314,6 +314,7 @@ CREATE TABLE "transcripts" (
 CREATE TABLE "notifications" (
     "id" TEXT NOT NULL,
     "studentId" TEXT,
+    "staffId" TEXT,
     "title" TEXT NOT NULL,
     "body" TEXT NOT NULL,
     "channel" "NotificationChannel" NOT NULL,
@@ -405,7 +406,7 @@ CREATE TABLE "InterventionAlert" (
 );
 
 -- CreateTable
-CREATE TABLE "TimetableEntry" (
+CREATE TABLE "timetable_entries" (
     "id" TEXT NOT NULL,
     "classId" TEXT NOT NULL,
     "subjectId" TEXT NOT NULL,
@@ -416,7 +417,18 @@ CREATE TABLE "TimetableEntry" (
     "room" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "TimetableEntry_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "timetable_entries_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "school_settings" (
+    "id" TEXT NOT NULL,
+    "clashDetectionEnabled" BOOLEAN NOT NULL DEFAULT true,
+    "departmentColorsEnabled" BOOLEAN NOT NULL DEFAULT true,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "updatedById" TEXT,
+
+    CONSTRAINT "school_settings_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -579,6 +591,9 @@ ALTER TABLE "report_cards" ADD CONSTRAINT "report_cards_termId_fkey" FOREIGN KEY
 ALTER TABLE "notifications" ADD CONSTRAINT "notifications_studentId_fkey" FOREIGN KEY ("studentId") REFERENCES "student_profiles"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "notifications" ADD CONSTRAINT "notifications_staffId_fkey" FOREIGN KEY ("staffId") REFERENCES "staff_profiles"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "promotion_records" ADD CONSTRAINT "promotion_records_studentId_fkey" FOREIGN KEY ("studentId") REFERENCES "student_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -597,7 +612,10 @@ ALTER TABLE "CharacterTrait" ADD CONSTRAINT "CharacterTrait_studentId_fkey" FORE
 ALTER TABLE "InterventionAlert" ADD CONSTRAINT "InterventionAlert_studentId_fkey" FOREIGN KEY ("studentId") REFERENCES "student_profiles"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "TimetableEntry" ADD CONSTRAINT "TimetableEntry_classId_fkey" FOREIGN KEY ("classId") REFERENCES "class_sections"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "timetable_entries" ADD CONSTRAINT "timetable_entries_classId_fkey" FOREIGN KEY ("classId") REFERENCES "class_sections"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "TimetableEntry" ADD CONSTRAINT "TimetableEntry_subjectId_fkey" FOREIGN KEY ("subjectId") REFERENCES "subjects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "timetable_entries" ADD CONSTRAINT "timetable_entries_subjectId_fkey" FOREIGN KEY ("subjectId") REFERENCES "subjects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "timetable_entries" ADD CONSTRAINT "timetable_entries_teacherId_fkey" FOREIGN KEY ("teacherId") REFERENCES "staff_profiles"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
