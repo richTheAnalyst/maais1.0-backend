@@ -47,7 +47,7 @@ export class UsersController {
   }
 
   @Get('staff')
-  @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
+  @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD, Role.TEACHER)
   @ApiOperation({ summary: 'List all staff members' })
   getAllStaff(@CurrentUser() user: { id: string, role: Role }) {
     return this.usersService.getAllStaff(user);
