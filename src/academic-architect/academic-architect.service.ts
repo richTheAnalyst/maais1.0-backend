@@ -203,4 +203,59 @@ async unlockTerm(termId: string, unlockedById: string, reason: string) {
     existingReportCardsWarning: term._count.reportCards > 0 ? term._count.reportCards : null,
   };
 }
+
+
+/**
+ * Get a department with its full staff roster, broken into HODs and teachers.
+ */
+async getDepartmentRoster(departmentId: string) {
+  const department = await this.prisma.department.findUniqueOrThrow({
+    where: { id: departmentId },
+    include: {
+      subjects: { orderBy: { name: 'asc' } },
+    },
+  });
+
+  const staff = await this.prisma.staffProfile.findMany({
+    where: { departmentId },
+    include: {
+      user: { select: { id: true, email: true, role: true, isActive: true } },
+      teachingAssignments: { include: { subject: true, classSection: true } },
+    },
+    orderBy: { lastName: 'asc' },
+  });
+
+  return {
+    department,
+        headmasters: staff.filter(s => s.user.role === 'HEADMASTER' || s.user.role === 'SUPER_ADMIN'),
+    hods: staff.filter(s => s.user.role === 'HOD'),
+    teachers: staff.filter(s => s.user.role === 'TEACHER'),
+  };
+}
+
+/**
+ * Get all departments with quick counts — used for the Academic Setup overview list.
+ */
+async getDepartmentsOverview() {
+  const departments = await this.prisma.department.findMany({
+    include: {
+      subjects: { select: { id: true } },
+      staff: {
+        select: { id: true, user: { select: { role: true } } },
+      },
+    },
+    orderBy: { name: 'asc' },
+  });
+
+  return departments.map(d => ({
+    id: d.id,
+    name: d.name,
+    code: d.code,
+    description: d.description,
+    subjectCount: d.subjects.length,
+        headmasterCount: d.staff.filter(s => s.user.role === 'HEADMASTER' || s.user.role === 'SUPER_ADMIN').length,
+    hodCount: d.staff.filter(s => s.user.role === 'HOD').length,
+    teacherCount: d.staff.filter(s => s.user.role === 'TEACHER').length,
+  }));
+}
 }
