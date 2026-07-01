@@ -369,4 +369,76 @@ export class AcademicArchitectService {
       teacherCount: d.staff.filter((s) => s.user.role === 'TEACHER').length,
     }));
   }
+
+  /**
+ * Get assignments for a specific teacher — used to scope the grading sheet.
+ */
+async getMyGradingScope(userId: string) {
+  const user = await this.prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    include: { staffProfile: true },
+  });
+
+  if (!user.staffProfile) return { subjects: [], classes: [] };
+
+  if (user.role === Role.TEACHER) {
+    // Return only assigned subject+class pairs
+    const assignments = await this.prisma.teachingAssignment.findMany({
+      where: { teacherId: user.staffProfile.id },
+      include: {
+        subject: { include: { department: true } },
+        classSection: true,
+      },
+    });
+
+    return {
+      role: 'TEACHER',
+      assignments: assignments.map(a => ({
+        subjectId: a.subjectId,
+        subjectName: a.subject.name,
+        subjectCode: a.subject.code,
+        subjectType: a.subject.type,
+        classSectionId: a.classSectionId,
+        className: a.classSection.name,
+        classLevel: a.classSection.level,
+      })),
+    };
+  }
+
+  if (user.role === Role.HOD) {
+    // Return all subjects in their department, and all classes in the school
+    const subjects = await this.prisma.subject.findMany({
+      where: { departmentId: user.staffProfile.departmentId ?? undefined, isActive: true },
+    });
+
+    const classes = await this.prisma.classSection.findMany({
+      orderBy: [{ level: 'asc' }, { name: 'asc' }],
+    });
+
+    return {
+      role: 'HOD',
+      departmentId: user.staffProfile.departmentId,
+      subjects: subjects.map(s => ({
+        subjectId: s.id,
+        subjectName: s.name,
+        subjectCode: s.code,
+        subjectType: s.type,
+      })),
+      classes: classes.map(c => ({
+        classSectionId: c.id,
+        className: c.name,
+        classLevel: c.level,
+      })),
+    };
+  }
+
+  // Admin/Headmaster — return everything
+  const subjects = await this.prisma.subject.findMany({ where: { isActive: true } });
+  const classes = await this.prisma.classSection.findMany();
+  return {
+    role: user.role,
+    subjects: subjects.map(s => ({ subjectId: s.id, subjectName: s.name, subjectCode: s.code, subjectType: s.type })),
+    classes: classes.map(c => ({ classSectionId: c.id, className: c.name, classLevel: c.level })),
+  };
+}
 }

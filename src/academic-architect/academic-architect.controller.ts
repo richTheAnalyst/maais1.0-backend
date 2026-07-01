@@ -199,4 +199,10 @@ getDepartmentsOverview() {
 getDepartmentRoster(@Param('id') id: string) {
   return this.service.getDepartmentRoster(id);
 }
+
+@Get('my-grading-scope')
+@ApiOperation({ summary: 'Get subjects and classes this user is allowed to grade' })
+getMyGradingScope(@CurrentUser('id') userId: string) {
+  return this.service.getMyGradingScope(userId);
+}
 }

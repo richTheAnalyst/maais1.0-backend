@@ -158,114 +158,192 @@ export class GradingService {
   }
 
   /**
-   * Upsert a grade entry (teacher submitting scores)
-   */
-  async upsertGrade(dto: UpsertGradeDto, submittedById: string) {
-    const term = await this.prisma.term.findUniqueOrThrow({
-      where: { id: dto.termId },
-    });
+ * Upsert a grade entry — enforces that the submitter is assigned to
+ * this subject/class combination (unless HOD/Admin/Headmaster).
+ */
+async upsertGrade(dto: UpsertGradeDto, submittedById: string) {
+  const term = await this.prisma.term.findUniqueOrThrow({
+    where: { id: dto.termId },
+  });
 
-    if (term.isLocked) {
-      throw new ForbiddenException(
-        'Term is locked. Grades cannot be modified.',
-      );
-    }
+  if (term.isLocked) {
+    throw new ForbiddenException('Term is locked. Grades cannot be modified.');
+  }
 
-    let totalScore: number | undefined;
-    let grade: string | undefined;
+  // Get submitter's role and staff profile
+  const submitter = await this.prisma.user.findUniqueOrThrow({
+    where: { id: submittedById },
+    include: { staffProfile: true },
+  });
 
-    if (dto.classScore !== undefined && dto.examScore !== undefined) {
-      const computed = this.computeGrade(dto.classScore, dto.examScore);
-      totalScore = computed.totalScore;
-      grade = computed.grade;
-    }
+  const isPrivileged =
+    submitter.role === Role.SUPER_ADMIN ||
+    submitter.role === Role.HEADMASTER;
 
-    const entry = await this.prisma.gradeEntry.upsert({
+  // TEACHER: must be assigned to this subject + class
+  if (submitter.role === Role.TEACHER && submitter.staffProfile) {
+    const assignment = await this.prisma.teachingAssignment.findFirst({
       where: {
-        studentId_subjectId_termId: {
-          studentId: dto.studentId,
-          subjectId: dto.subjectId,
-          termId: dto.termId,
+        teacherId: submitter.staffProfile.id,
+        subjectId: dto.subjectId,
+        classSection: {
+          students: { some: { id: dto.studentId } },
         },
       },
-      create: {
+    });
+
+    if (!assignment) {
+      throw new ForbiddenException(
+        'You are not assigned to teach this subject for this student\'s class.',
+      );
+    }
+  }
+
+  // HOD: must own the department that owns the subject
+  if (submitter.role === Role.HOD && submitter.staffProfile) {
+    const subject = await this.prisma.subject.findUniqueOrThrow({
+      where: { id: dto.subjectId },
+      select: { departmentId: true },
+    });
+
+    if (subject.departmentId !== submitter.staffProfile.departmentId) {
+      throw new ForbiddenException(
+        'This subject does not belong to your department.',
+      );
+    }
+  }
+
+  let totalScore: number | undefined;
+  let grade: string | undefined;
+
+  if (dto.classScore !== undefined && dto.examScore !== undefined) {
+    const computed = this.computeGrade(dto.classScore, dto.examScore);
+    totalScore = computed.totalScore;
+    grade = computed.grade;
+  }
+
+  const entry = await this.prisma.gradeEntry.upsert({
+    where: {
+      studentId_subjectId_termId: {
         studentId: dto.studentId,
         subjectId: dto.subjectId,
         termId: dto.termId,
-        classScore: dto.classScore,
-        examScore: dto.examScore,
-        totalScore,
-        grade,
-        remark: dto.remark,
-        hasObservation: dto.hasObservation ?? false,
-        observationText: dto.observationText,
-        submittedById,
-        submittedAt: new Date(),
-        isApproved: false, // Must be approved by HOD
       },
-      update: {
-        classScore: dto.classScore,
-        examScore: dto.examScore,
-        totalScore,
-        grade,
-        remark: dto.remark,
-        hasObservation: dto.hasObservation,
-        observationText: dto.observationText,
-        submittedById,
-        submittedAt: new Date(),
-        isApproved: false, // Reset approval on update
-      },
-      include: { student: true, subject: true },
-    });
+    },
+    create: {
+      studentId: dto.studentId,
+      subjectId: dto.subjectId,
+      termId: dto.termId,
+      classScore: dto.classScore,
+      examScore: dto.examScore,
+      totalScore,
+      grade,
+      remark: dto.remark,
+      hasObservation: dto.hasObservation ?? false,
+      observationText: dto.observationText,
+      submittedById,
+      submittedAt: new Date(),
+      isApproved: false,
+    },
+    update: {
+      classScore: dto.classScore,
+      examScore: dto.examScore,
+      totalScore,
+      grade,
+      remark: dto.remark,
+      hasObservation: dto.hasObservation,
+      observationText: dto.observationText,
+      submittedById,
+      submittedAt: new Date(),
+      isApproved: false,
+    },
+    include: { student: true, subject: true },
+  });
 
-    return entry;
-  }
+  return entry;
+}
 
-  /**
-   * HOD approves a grade entry
-   */
-  async approveGrade(
-    gradeEntryId: string,
-    approvedById: string,
-    userRole: Role,
+/**
+ * HOD approves a grade entry — enforces department scope.
+ */
+async approveGrade(gradeEntryId: string, approvedById: string, userRole: Role) {
+  if (
+    userRole !== Role.HOD &&
+    userRole !== Role.HEADMASTER &&
+    userRole !== Role.SUPER_ADMIN &&
+    userRole !== Role.TEACHER
   ) {
-    if (
-      userRole !== Role.HOD &&
-      userRole !== Role.HEADMASTER &&
-      userRole !== Role.SUPER_ADMIN &&
-      userRole !== Role.TEACHER
-    ) {
-      throw new ForbiddenException(
-        'Only HODs or above can approve grade entries',
-      );
-    }
+    throw new ForbiddenException('Only HODs or above can approve grade entries');
+  }
 
-    return this.prisma.gradeEntry.update({
+  // HOD scope check: subject must be in their department
+  if (userRole === Role.HOD) {
+    const approver = await this.prisma.user.findUniqueOrThrow({
+      where: { id: approvedById },
+      include: { staffProfile: true },
+    });
+
+    const entry = await this.prisma.gradeEntry.findUniqueOrThrow({
       where: { id: gradeEntryId },
-      data: { isApproved: true, approvedById, approvedAt: new Date() },
+      include: { subject: { select: { departmentId: true } } },
     });
-  }
 
-  /**
-   * Bulk approve grades for a class/subject
-   */
-  async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
-    if (
-      userRole !== Role.HOD &&
-      userRole !== Role.HEADMASTER &&
-      userRole !== Role.SUPER_ADMIN
-    ) {
+    if (entry.subject.departmentId !== approver.staffProfile?.departmentId) {
       throw new ForbiddenException(
-        'Only HODs or above can approve grade entries',
+        'This subject does not belong to your department.',
       );
     }
-
-    return this.prisma.gradeEntry.updateMany({
-      where: { id: { in: ids } },
-      data: { isApproved: true, approvedById, approvedAt: new Date() },
-    });
   }
 
+  return this.prisma.gradeEntry.update({
+    where: { id: gradeEntryId },
+    data: { isApproved: true, approvedById, approvedAt: new Date() },
+  });
+}
+
+/**
+ * Bulk approve — HOD can only approve entries for their department's subjects.
+ */
+async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
+  if (
+    userRole !== Role.HOD &&
+    userRole !== Role.HEADMASTER &&
+    userRole !== Role.SUPER_ADMIN
+  ) {
+    throw new ForbiddenException('Only HODs or above can approve grade entries');
+  }
+
+  // Filter to department scope if HOD
+  let allowedIds = ids;
+  if (userRole === Role.HOD) {
+    const approver = await this.prisma.user.findUniqueOrThrow({
+      where: { id: approvedById },
+      include: { staffProfile: true },
+    });
+
+    const entries = await this.prisma.gradeEntry.findMany({
+      where: { id: { in: ids } },
+      include: { subject: { select: { departmentId: true } } },
+    });
+
+    allowedIds = entries
+      .filter(e => e.subject.departmentId === approver.staffProfile?.departmentId)
+      .map(e => e.id);
+
+    if (allowedIds.length === 0) {
+      throw new ForbiddenException(
+        'None of the selected grades belong to your department.',
+      );
+    }
+  }
+
+  return this.prisma.gradeEntry.updateMany({
+    where: { id: { in: allowedIds } },
+    data: { isApproved: true, approvedById, approvedAt: new Date() },
+  });
+}
+
+  
   /**
    * Get class performance summary for a term (HOD view)
    */
