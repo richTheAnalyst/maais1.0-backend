@@ -749,4 +749,204 @@ async getSubjectPerformanceFiltered(filters: {
     },
   };
 }
+
+/**
+ * Get performance analytics for a teacher's assigned subjects.
+ * Returns per-subject averages, top students, and at-risk students (below 50%).
+ */
+async getTeacherAnalytics(staffProfileId: string, termId: string) {
+  const assignments = await this.prisma.teachingAssignment.findMany({
+    where: { teacherId: staffProfileId },
+    include: {
+      subject: true,
+      classSection: true,
+    },
+  });
+
+  const results = await Promise.all(
+    assignments.map(async (assignment) => {
+      const grades = await this.prisma.gradeEntry.findMany({
+        where: {
+          subjectId: assignment.subjectId,
+          termId,
+          student: { currentClassId: assignment.classSectionId },
+          totalScore: { not: null },
+        },
+        include: {
+          student: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              indexNumber: true,
+            },
+          },
+        },
+        orderBy: { totalScore: 'desc' },
+      });
+
+      if (grades.length === 0) {
+        return {
+          assignmentId: assignment.id,
+          subject: { id: assignment.subject.id, name: assignment.subject.name, code: assignment.subject.code, type: assignment.subject.type },
+          classSection: { id: assignment.classSection.id, name: assignment.classSection.name, level: assignment.classSection.level },
+          averageScore: null,
+          studentCount: 0,
+          topStudents: [],
+          atRiskStudents: [],
+          gradeDistribution: {},
+        };
+      }
+
+      const scores = grades.map(g => g.totalScore!);
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+
+      const topStudents = grades.slice(0, 5).map(g => ({
+        id: g.student.id,
+        name: `${g.student.firstName} ${g.student.lastName}`,
+        indexNumber: g.student.indexNumber,
+        score: g.totalScore!,
+        grade: g.grade,
+      }));
+
+      const atRiskStudents = grades
+        .filter(g => g.totalScore! < 50)
+        .slice(-10)
+        .reverse()
+        .map(g => ({
+          id: g.student.id,
+          name: `${g.student.firstName} ${g.student.lastName}`,
+          indexNumber: g.student.indexNumber,
+          score: g.totalScore!,
+          grade: g.grade,
+        }));
+
+      // Grade distribution
+      const dist: Record<string, number> = { A1: 0, B2: 0, B3: 0, C4: 0, C5: 0, C6: 0, D7: 0, E8: 0, F9: 0 };
+      grades.forEach(g => { if (g.grade && dist[g.grade] !== undefined) dist[g.grade]++; });
+
+      return {
+        assignmentId: assignment.id,
+        subject: { id: assignment.subject.id, name: assignment.subject.name, code: assignment.subject.code, type: assignment.subject.type },
+        classSection: { id: assignment.classSection.id, name: assignment.classSection.name, level: assignment.classSection.level },
+        averageScore: parseFloat(avg.toFixed(2)),
+        studentCount: grades.length,
+        topStudents,
+        atRiskStudents,
+        gradeDistribution: dist,
+      };
+    }),
+  );
+
+  return results;
+}
+
+/**
+ * Get HOD analytics: per-subject performance across their department,
+ * with teachers for each subject, top students, and at-risk students.
+ */
+async getHODAnalytics(departmentId: string, termId: string) {
+  const subjects = await this.prisma.subject.findMany({
+    where: { departmentId },
+    include: {
+      teachingAssignments: {
+        include: {
+          teacher: {
+            select: { id: true, firstName: true, lastName: true, staffId: true },
+          },
+          classSection: { select: { id: true, name: true, level: true } },
+        },
+      },
+    },
+    orderBy: { name: 'asc' },
+  });
+
+  const results = await Promise.all(
+    subjects.map(async (subject) => {
+      const grades = await this.prisma.gradeEntry.findMany({
+        where: {
+          subjectId: subject.id,
+          termId,
+          totalScore: { not: null },
+        },
+        include: {
+          student: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              indexNumber: true,
+              currentClass: { select: { name: true, level: true } },
+            },
+          },
+        },
+        orderBy: { totalScore: 'desc' },
+      });
+
+      if (grades.length === 0) {
+        return {
+          subjectId: subject.id,
+          subjectName: subject.name,
+          subjectCode: subject.code,
+          subjectType: subject.type,
+          teachers: subject.teachingAssignments.map(a => ({
+            id: a.teacher.id,
+            name: `${a.teacher.firstName} ${a.teacher.lastName}`,
+            staffId: a.teacher.staffId,
+            classSection: a.classSection,
+          })),
+          averageScore: null,
+          studentCount: 0,
+          topStudents: [],
+          atRiskStudents: [],
+          gradeDistribution: {},
+        };
+      }
+
+      const scores = grades.map(g => g.totalScore!);
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+
+      const dist: Record<string, number> = { A1: 0, B2: 0, B3: 0, C4: 0, C5: 0, C6: 0, D7: 0, E8: 0, F9: 0 };
+      grades.forEach(g => { if (g.grade && dist[g.grade] !== undefined) dist[g.grade]++; });
+
+      return {
+        subjectId: subject.id,
+        subjectName: subject.name,
+        subjectCode: subject.code,
+        subjectType: subject.type,
+        teachers: subject.teachingAssignments.map(a => ({
+          id: a.teacher.id,
+          name: `${a.teacher.firstName} ${a.teacher.lastName}`,
+          staffId: a.teacher.staffId,
+          classSection: a.classSection,
+        })),
+        averageScore: parseFloat(avg.toFixed(2)),
+        studentCount: grades.length,
+        topStudents: grades.slice(0, 5).map(g => ({
+          id: g.student.id,
+          name: `${g.student.firstName} ${g.student.lastName}`,
+          indexNumber: g.student.indexNumber,
+          score: g.totalScore!,
+          grade: g.grade,
+          class: g.student.currentClass,
+        })),
+        atRiskStudents: grades
+          .filter(g => g.totalScore! < 50)
+          .slice(-10)
+          .reverse()
+          .map(g => ({
+            id: g.student.id,
+            name: `${g.student.firstName} ${g.student.lastName}`,
+            indexNumber: g.student.indexNumber,
+            score: g.totalScore!,
+            grade: g.grade,
+            class: g.student.currentClass,
+          })),
+        gradeDistribution: dist,
+      };
+    }),
+  );
+
+  return results;
+}
 }

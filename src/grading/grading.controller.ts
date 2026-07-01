@@ -186,4 +186,24 @@ getPerformanceFiltered(
 ) {
   return this.gradingService.getSubjectPerformanceFiltered({ classId, departmentId, subjectType });
 }
+
+@Get('analytics/teacher/:staffProfileId')
+@Roles(Role.TEACHER, Role.HOD, Role.HEADMASTER, Role.SUPER_ADMIN)
+@ApiOperation({ summary: 'Get performance analytics for a teacher\'s subjects' })
+getTeacherAnalytics(
+  @Param('staffProfileId') staffProfileId: string,
+  @Query('termId') termId: string,
+) {
+  return this.gradingService.getTeacherAnalytics(staffProfileId, termId);
+}
+
+@Get('analytics/department/:departmentId')
+@Roles(Role.HOD, Role.HEADMASTER, Role.SUPER_ADMIN)
+@ApiOperation({ summary: 'Get HOD analytics for department subjects' })
+getHODAnalytics(
+  @Param('departmentId') departmentId: string,
+  @Query('termId') termId: string,
+) {
+  return this.gradingService.getHODAnalytics(departmentId, termId);
+}
 }
