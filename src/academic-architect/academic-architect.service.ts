@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { TermNumber, ClassLevel, SubjectType, Role } from '@prisma/client';
 
@@ -63,6 +67,21 @@ export class AcademicArchitectService {
     return this.prisma.department.create({ data: { name, code, description } });
   }
 
+  async deleteDepartment(id: string) {
+    // Check if department exists
+    /*  const department = await this.prisma.department.findUnique({
+    where: { id },
+  }); */
+
+    await this.prisma.department.delete({
+      where: { id },
+    });
+
+    return {
+      message: 'Department deleted successfully',
+    };
+  }
+
   async getAllDepartments() {
     return this.prisma.department.findMany({
       include: { subjects: true, _count: { select: { staff: true } } },
@@ -80,6 +99,44 @@ export class AcademicArchitectService {
     description?: string;
   }) {
     return this.prisma.subject.create({ data: dto });
+  }
+
+  async deleteSubject(dto: {
+    id: string;
+    name: string;
+    code: string;
+    type: SubjectType;
+    departmentId?: string;
+    description?: string;
+  }) {
+    const { id } = dto;
+    return this.prisma.$transaction(async (tx) => {
+      // Delete grade entries
+      await tx.gradeEntry.deleteMany({
+        where: {
+          subjectId: id,
+        },
+      });
+
+      // Delete teaching assignments
+      await tx.teachingAssignment.deleteMany({
+        where: {
+          subjectId: id,
+        },
+      });
+
+      // Delete timetable entries
+      await tx.timetableEntry.deleteMany({
+        where: {
+          subjectId: id,
+        },
+      });
+
+      // Finally delete the subject
+      return tx.subject.delete({
+        where: { id },
+      });
+    });
   }
 
   async getAllSubjects() {
@@ -104,6 +161,53 @@ export class AcademicArchitectService {
       },
       orderBy: [{ level: 'asc' }, { name: 'asc' }],
     });
+  }
+  async deleteClassSection(id: string) {
+    const classSection = await this.prisma.classSection.findUnique({
+      where: { id },
+      include: {
+        students: true,
+        teachingAssignments: true,
+        timetableEntries: true,
+      },
+    });
+
+    /* if (
+    classSection.students.length > 0 ||
+    classSection.teachingAssignments.length > 0 ||
+    classSection.timetableEntries.length > 0
+  ) {
+    throw new BadRequestException(
+      'Cannot delete a class section because it is currently assigned to students, teachers, or timetable entries.',
+    );
+  } */
+
+    await this.prisma.studentProfile.updateMany({
+      where: { currentClassId: id },
+      data: { currentClassId: null },
+    });
+
+    await this.prisma.classSection.update({
+      where: { id },
+      data: {
+        classTeacherId: null,
+      },
+    });
+
+    await this.prisma.teachingAssignment.deleteMany({
+      where: { classSectionId: id },
+    });
+
+    await this.prisma.timetableEntry.deleteMany({
+      where: { classId: id },
+    });
+
+    await this.prisma.classSection.delete({
+      where: { id },
+    });
+    return {
+      message: 'Class section deleted successfully',
+    };
   }
 
   async assignClassTeacher(classSectionId: string, staffId: string) {
@@ -133,129 +237,136 @@ export class AcademicArchitectService {
 
   // ─── Teaching Assignments: full CRUD ──────────────────
 
-async getAllAssignments() {
-  return this.prisma.teachingAssignment.findMany({
-    include: {
-      teacher: { select: { id: true, firstName: true, lastName: true, staffId: true } },
-      subject: true,
-      classSection: true,
-    },
-    orderBy: { teacher: { lastName: 'asc' } },
-  });
-}
-
-async deleteAssignment(assignmentId: string) {
-  return this.prisma.teachingAssignment.delete({
-    where: { id: assignmentId },
-  });
-}
-
-// ─── Staff role & department management ───────────────
-
-async updateStaffRole(staffUserId: string, role: Role) {
-  return this.prisma.user.update({
-    where: { id: staffUserId },
-    data: { role },
-  });
-}
-
-async updateStaffDepartment(staffId: string, departmentId: string | null) {
-  return this.prisma.staffProfile.update({
-    where: { id: staffId },
-    data: { departmentId },
-  });
-}
-
-// ─── Term unlock (with audit trail) ────────────────────
-
-async unlockTerm(termId: string, unlockedById: string, reason: string) {
-  const term = await this.prisma.term.findUniqueOrThrow({
-    where: { id: termId },
-    include: {
-      _count: { select: { reportCards: true } },
-    },
-  });
-
-  const unlocked = await this.prisma.term.update({
-    where: { id: termId },
-    data: { isLocked: false },
-  });
-
-  // Log this as an audit event since it's a sensitive reversal
-  await this.prisma.auditLog.create({
-    data: {
-      userId: unlockedById,
-      action: 'UNLOCK',
-      entity: 'Term',
-      entityId: termId,
-      payload: {
-        reason,
-        existingReportCards: term._count.reportCards,
-        warning: term._count.reportCards > 0
-          ? 'Term had generated report cards at time of unlock — they may now be stale if grades change.'
-          : null,
+  async getAllAssignments() {
+    return this.prisma.teachingAssignment.findMany({
+      include: {
+        teacher: {
+          select: { id: true, firstName: true, lastName: true, staffId: true },
+        },
+        subject: true,
+        classSection: true,
       },
-    },
-  });
+      orderBy: { teacher: { lastName: 'asc' } },
+    });
+  }
 
-  return {
-    ...unlocked,
-    existingReportCardsWarning: term._count.reportCards > 0 ? term._count.reportCards : null,
-  };
-}
+  async deleteAssignment(assignmentId: string) {
+    return this.prisma.teachingAssignment.delete({
+      where: { id: assignmentId },
+    });
+  }
 
+  // ─── Staff role & department management ───────────────
 
-/**
- * Get a department with its full staff roster, broken into HODs and teachers.
- */
-async getDepartmentRoster(departmentId: string) {
-  const department = await this.prisma.department.findUniqueOrThrow({
-    where: { id: departmentId },
-    include: {
-      subjects: { orderBy: { name: 'asc' } },
-    },
-  });
+  async updateStaffRole(staffUserId: string, role: Role) {
+    return this.prisma.user.update({
+      where: { id: staffUserId },
+      data: { role },
+    });
+  }
 
-  const staff = await this.prisma.staffProfile.findMany({
-    where: { departmentId },
-    include: {
-      user: { select: { id: true, email: true, role: true, isActive: true } },
-      teachingAssignments: { include: { subject: true, classSection: true } },
-    },
-    orderBy: { lastName: 'asc' },
-  });
+  async updateStaffDepartment(staffId: string, departmentId: string | null) {
+    return this.prisma.staffProfile.update({
+      where: { id: staffId },
+      data: { departmentId },
+    });
+  }
 
-  return {
-    department,
-        headmasters: staff.filter(s => s.user.role === 'HEADMASTER' || s.user.role === 'SUPER_ADMIN'),
-    hods: staff.filter(s => s.user.role === 'HOD'),
-    teachers: staff.filter(s => s.user.role === 'TEACHER'),
-  };
-}
+  // ─── Term unlock (with audit trail) ────────────────────
 
-/**
- * Get all departments with quick counts — used for the Academic Setup overview list.
- */
-async getDepartmentsOverview() {
-  const departments = await this.prisma.department.findMany({
-    include: {
-      subjects: { select: { id: true } },
-      staff: {
-        select: { id: true, user: { select: { role: true } } },
+  async unlockTerm(termId: string, unlockedById: string, reason: string) {
+    const term = await this.prisma.term.findUniqueOrThrow({
+      where: { id: termId },
+      include: {
+        _count: { select: { reportCards: true } },
       },
-    },
-    orderBy: { name: 'asc' },
-  });
+    });
 
-  return departments.map(d => ({
-    id: d.id,
-    name: d.name,
-    code: d.code,
-    description: d.description,
-    subjectCount: d.subjects.length,
-        headmasterCount: d.staff.filter(s => s.user.role === 'HEADMASTER' || s.user.role === 'SUPER_ADMIN').length,
-    hodCount: d.staff.filter(s => s.user.role === 'HOD').length,
-    teacherCount: d.staff.filter(s => s.user.role === 'TEACHER').length,
-  }));
-}
+    const unlocked = await this.prisma.term.update({
+      where: { id: termId },
+      data: { isLocked: false },
+    });
+
+    // Log this as an audit event since it's a sensitive reversal
+    await this.prisma.auditLog.create({
+      data: {
+        userId: unlockedById,
+        action: 'UNLOCK',
+        entity: 'Term',
+        entityId: termId,
+        payload: {
+          reason,
+          existingReportCards: term._count.reportCards,
+          warning:
+            term._count.reportCards > 0
+              ? 'Term had generated report cards at time of unlock — they may now be stale if grades change.'
+              : null,
+        },
+      },
+    });
+
+    return {
+      ...unlocked,
+      existingReportCardsWarning:
+        term._count.reportCards > 0 ? term._count.reportCards : null,
+    };
+  }
+
+  /**
+   * Get a department with its full staff roster, broken into HODs and teachers.
+   */
+  async getDepartmentRoster(departmentId: string) {
+    const department = await this.prisma.department.findUniqueOrThrow({
+      where: { id: departmentId },
+      include: {
+        subjects: { orderBy: { name: 'asc' } },
+      },
+    });
+
+    const staff = await this.prisma.staffProfile.findMany({
+      where: { departmentId },
+      include: {
+        user: { select: { id: true, email: true, role: true, isActive: true } },
+        teachingAssignments: { include: { subject: true, classSection: true } },
+      },
+      orderBy: { lastName: 'asc' },
+    });
+
+    return {
+      department,
+      headmasters: staff.filter(
+        (s) => s.user.role === 'HEADMASTER' || s.user.role === 'SUPER_ADMIN',
+      ),
+      hods: staff.filter((s) => s.user.role === 'HOD'),
+      teachers: staff.filter((s) => s.user.role === 'TEACHER'),
+    };
+  }
+
+  /**
+   * Get all departments with quick counts — used for the Academic Setup overview list.
+   */
+  async getDepartmentsOverview() {
+    const departments = await this.prisma.department.findMany({
+      include: {
+        subjects: { select: { id: true } },
+        staff: {
+          select: { id: true, user: { select: { role: true } } },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    return departments.map((d) => ({
+      id: d.id,
+      name: d.name,
+      code: d.code,
+      description: d.description,
+      subjectCount: d.subjects.length,
+      headmasterCount: d.staff.filter(
+        (s) => s.user.role === 'HEADMASTER' || s.user.role === 'SUPER_ADMIN',
+      ).length,
+      hodCount: d.staff.filter((s) => s.user.role === 'HOD').length,
+      teacherCount: d.staff.filter((s) => s.user.role === 'TEACHER').length,
+    }));
+  }
 }

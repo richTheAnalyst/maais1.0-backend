@@ -53,6 +53,7 @@ export class AcademicArchitectController {
     return this.service.setActiveTerm(id);
   }
 
+  //departments
   @Post('departments')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
   @ApiOperation({ summary: 'Create a department' })
@@ -66,6 +67,15 @@ export class AcademicArchitectController {
     return this.service.getAllDepartments();
   }
 
+  @Delete('departments/:id')
+  @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
+  @ApiOperation({summary: 'delete a department'})
+  async deleteDepartment(@Param('id') id: string){
+    return this.service.deleteDepartment(id);
+
+  }
+
+  //subjects
   @Post('subjects')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
   @ApiOperation({ summary: 'Create a subject' })
@@ -73,12 +83,21 @@ export class AcademicArchitectController {
     return this.service.createSubject(dto);
   }
 
+  @Delete('subjects/:id')
+  @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
+  @ApiOperation({ summary: 'Delete a subject' })
+  async deleteSubject(@Param('id') id: string) {
+    return this.service.deleteSubject({ id } as any);
+  }
+
+
   @Get('subjects')
   @ApiOperation({ summary: 'Get all active subjects' })
   getAllSubjects() {
     return this.service.getAllSubjects();
   }
 
+  //classes
   @Post('classes')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
   @ApiOperation({ summary: 'Create a class section' })
@@ -92,6 +111,13 @@ export class AcademicArchitectController {
     return this.service.getAllClassSections();
   }
 
+  @Delete('classes/:id')
+@Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
+@ApiOperation({ summary: 'Delete a class section' })
+deleteClass(@Param('id') id: string) {
+  return this.service.deleteClassSection(id);
+}
+
   @Patch('classes/:id/teacher')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
   @ApiOperation({ summary: 'Assign class teacher' })
@@ -99,6 +125,8 @@ export class AcademicArchitectController {
     return this.service.assignClassTeacher(id, dto.staffId);
   }
 
+
+  //assignments
   @Post('assignments')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
   @ApiOperation({ summary: 'Assign teacher to subject/class' })
