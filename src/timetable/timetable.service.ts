@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { DayOfWeek } from '@prisma/client';
 
@@ -16,43 +16,36 @@ export interface CreateTimetableEntryDto {
 export class TimetableService {
   constructor(private prisma: PrismaService) {}
 
-  async create(dto: CreateTimetableEntryDto) {
-    // Check for clashes — same teacher, same day, overlapping time
-    const clash = await this.prisma.timetableEntry.findFirst({
-      where: {
-        teacherId: dto.teacherId,
-        dayOfWeek: dto.dayOfWeek,
-        OR: [
-          {
-            startTime: { lte: dto.startTime },
-            endTime: { gt: dto.startTime },
-          },
-          {
-            startTime: { lt: dto.endTime },
-            endTime: { gte: dto.endTime },
-          },
-          {
-            startTime: { gte: dto.startTime },
-            endTime: { lte: dto.endTime },
-          },
-        ],
-      },
-    });
+  
+async create(dto: CreateTimetableEntryDto) {
+  const clash = await this.prisma.timetableEntry.findFirst({
+    where: {
+      teacherId: dto.teacherId,
+      dayOfWeek: dto.dayOfWeek,
+      OR: [
+        { startTime: { lte: dto.startTime }, endTime: { gt: dto.startTime } },
+        { startTime: { lt: dto.endTime }, endTime: { gte: dto.endTime } },
+        { startTime: { gte: dto.startTime }, endTime: { lte: dto.endTime } },
+      ],
+    },
+    include: { subject: true, classSection: true },
+  });
 
-    if(clash) {
-      throw new Error(
-        'Teacher already has a timetable entry during this time slot'
-      );
-    }
-    return this.prisma.timetableEntry.create({
-      data: dto,
-      include: {
-        classSection: true,
-        subject: true,
-        teacher: { include: { user: { select: { email: true } } } },
-      },
-    });
+  if (clash) {
+    throw new BadRequestException(
+      `Teacher already has ${clash.subject.name} (${clash.classSection.name}) scheduled at this time on ${clash.dayOfWeek}.`
+    );
   }
+
+  return this.prisma.timetableEntry.create({
+    data: dto,
+    include: {
+      classSection: true,
+      subject: { include: { department: true } },
+      teacher: true,
+    },
+  });
+}
 
   async findAll(filters?: {
     teacherId?: string;
@@ -108,12 +101,45 @@ export class TimetableService {
   }
 
   async update(id: string, dto: Partial<CreateTimetableEntryDto>) {
-    return this.prisma.timetableEntry.update({
-      where: { id },
-      data: dto,
-      include: { classSection: true, subject: true, teacher: true },
-    });
+  const existing = await this.prisma.timetableEntry.findUnique({ where: { id } });
+  if (!existing) throw new NotFoundException('Timetable entry not found');
+
+  // Re-check clashes when time/day/teacher changes — exclude self
+  const teacherId = dto.teacherId ?? existing.teacherId;
+  const dayOfWeek = dto.dayOfWeek ?? existing.dayOfWeek;
+  const startTime = dto.startTime ?? existing.startTime;
+  const endTime = dto.endTime ?? existing.endTime;
+
+  const clash = await this.prisma.timetableEntry.findFirst({
+    where: {
+      id: { not: id }, // exclude self
+      teacherId,
+      dayOfWeek,
+      OR: [
+        { startTime: { lte: startTime }, endTime: { gt: startTime } },
+        { startTime: { lt: endTime }, endTime: { gte: endTime } },
+        { startTime: { gte: startTime }, endTime: { lte: endTime } },
+      ],
+    },
+    include: { subject: true, classSection: true },
+  });
+
+  if (clash) {
+    throw new BadRequestException(
+      `Teacher already has ${clash.subject.name} (${clash.classSection.name}) scheduled at this time on ${dayOfWeek}.`
+    );
   }
+
+  return this.prisma.timetableEntry.update({
+    where: { id },
+    data: dto,
+    include: {
+      classSection: true,
+      subject: { include: { department: true } },
+      teacher: true,
+    },
+  });
+}
 
   async delete(id: string) {
     return this.prisma.timetableEntry.delete({ where: { id } });
