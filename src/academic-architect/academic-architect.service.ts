@@ -441,4 +441,31 @@ async getMyGradingScope(userId: string) {
     classes: classes.map(c => ({ classSectionId: c.id, className: c.name, classLevel: c.level })),
   };
 }
+
+//audit logs function
+async getAuditLogs(filters: {
+  entity?: string;
+  action?: string;
+  userId?: string;
+  take?: number;
+}) {
+  return this.prisma.auditLog.findMany({
+    where: {
+      ...(filters.entity && { entity: filters.entity }),
+      ...(filters.action && { action: filters.action as any }),
+      ...(filters.userId && { userId: filters.userId }),
+    },
+    include: {
+      user: {
+        select: {
+          email: true,
+          role: true,
+          staffProfile: { select: { firstName: true, lastName: true, staffId: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: filters.take ?? 50,
+  });
+}
 }

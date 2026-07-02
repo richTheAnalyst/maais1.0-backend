@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Delete, Query } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { AcademicArchitectService } from './academic-architect.service';
@@ -204,5 +204,18 @@ getDepartmentRoster(@Param('id') id: string) {
 @ApiOperation({ summary: 'Get subjects and classes this user is allowed to grade' })
 getMyGradingScope(@CurrentUser('id') userId: string) {
   return this.service.getMyGradingScope(userId);
+}
+
+//audit logs
+@Get('audit-logs')
+@Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
+@ApiOperation({ summary: 'Get audit logs with optional filters' })
+getAuditLogs(
+  @Query('entity') entity?: string,
+  @Query('action') action?: string,
+  @Query('userId') userId?: string,
+  @Query('take') take?: string,
+) {
+  return this.service.getAuditLogs({ entity, action, userId, take: take ? parseInt(take) : 50 });
 }
 }
