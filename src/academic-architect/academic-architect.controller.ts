@@ -57,8 +57,8 @@ export class AcademicArchitectController {
   @Post('departments')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
   @ApiOperation({ summary: 'Create a department' })
-  createDepartment(@Body() dto: CreateDepartmentDto) {
-    return this.service.createDepartment(dto.name, dto.code, dto.description);
+  createDepartment(@Body() dto: CreateDepartmentDto, @CurrentUser('id') userId: string) {
+    return this.service.createDepartment(dto.name, dto.code, dto.description, userId);
   }
 
   @Get('departments')

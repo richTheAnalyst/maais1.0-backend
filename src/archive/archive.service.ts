@@ -269,10 +269,11 @@ export class ArchiveService {
    * Term 1 -> Term 2 -> Term 3. No student/class changes happen here —
    * only term activation state shifts. The current term must be locked first.
    */
-  async advanceToNextTerm(currentTermId: string) {
+  async advanceToNextTerm(currentTermId: string, performedById?: string) {
     const currentTerm = await this.prisma.term.findUniqueOrThrow({
       where: { id: currentTermId },
       include: { academicYear: { include: { terms: true } } },
+
     });
 
     if (!currentTerm.isLocked) {
@@ -311,6 +312,21 @@ export class ArchiveService {
       where: { id: nextTerm.id },
       data: { isActive: true },
     });
+
+    if (performedById) {
+    await this.prisma.auditLog.create({
+      data: {
+        userId: performedById,
+        action: AuditAction.UPDATE,
+        entity: 'Term',
+        entityId: currentTermId,
+        payload: {
+          previousTerm: currentTerm.termNumber,
+          newActiveTerm: activated.termNumber,
+        },
+      },
+    });
+  }
 
     return {
       previousTerm: currentTerm.termNumber,

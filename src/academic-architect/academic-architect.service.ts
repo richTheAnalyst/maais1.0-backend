@@ -63,9 +63,23 @@ export class AcademicArchitectService {
 
   // ─── Departments ──────────────────────────────────────
 
-  async createDepartment(name: string, code: string, description?: string) {
-    return this.prisma.department.create({ data: { name, code, description } });
+ async createDepartment(name: string, code: string, description?: string, createdById?: string) {
+  const created = await this.prisma.department.create({ data: { name, code, description } });
+
+  if (createdById) {
+    await this.prisma.auditLog.create({
+      data: {
+        userId: createdById,
+        action: AuditAction.CREATE,
+        entity: 'Department',
+        entityId: created.id,
+        payload: { name, code, description },
+      },
+    });
   }
+
+  return created;
+}
 
   async deleteDepartment(id: string) {
     // Check if department exists
