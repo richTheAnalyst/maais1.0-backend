@@ -6,6 +6,7 @@ import { PrismaModule } from './common/prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { AcademicArchitectModule } from './academic-architect/academic-architect.module';
+import { AuditModule } from './common/audit/audit.module';
 import { GradingModule } from './grading/grading.module';
 import { ReportsModule } from './reports/reports.module';
 import { ArchiveModule } from './archive/archive.module';
@@ -35,6 +36,7 @@ import { SettingsModule } from './settings/settings.module';
     InterventionsModule,
     TimetableModule,
     SettingsModule,
+    AuditModule,
   ],
   providers: [
     {

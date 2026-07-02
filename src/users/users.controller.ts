@@ -15,15 +15,15 @@ export class UsersController {
   @Post('staff')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
   @ApiOperation({ summary: 'Create a staff account' })
-  createStaff(@Body() dto: CreateStaffDto) {
-    return this.usersService.createStaff(dto);
+ createStaff(@Body() dto: CreateStaffDto, @CurrentUser('id') userId: string) {
+  return this.usersService.createStaff(dto, userId);
   }
 
   @Post('students')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.TEACHER, Role.STUDENT)
   @ApiOperation({ summary: 'Enrol a new student' })
-  createStudent(@Body() dto: CreateStudentDto) {
-    return this.usersService.createStudent(dto);
+  createStudent(@Body() dto: CreateStudentDto, @CurrentUser('id') userId: string) {
+  return this.usersService.createStudent(dto, userId);
   }
 
   @Post('parents')
@@ -56,8 +56,8 @@ export class UsersController {
   @Delete(':id/deactivate')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
   @ApiOperation({ summary: 'Deactivate a user account' })
-  deactivate(@Param('id') id: string) {
-    return this.usersService.deactivateUser(id);
+ deactivate(@Param('id') id: string, @CurrentUser('id') userId: string) {
+  return this.usersService.deactivateUser(id, userId);
   }
 
   //csv

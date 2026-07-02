@@ -4,10 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { TermNumber, ClassLevel, SubjectType, Role } from '@prisma/client';
+import { TermNumber, ClassLevel, SubjectType, Role, AuditAction } from '@prisma/client';
 
 @Injectable()
 export class AcademicArchitectService {
+  audit: any;
   constructor(private prisma: PrismaService) {}
 
   // ─── Academic Years ───────────────────────────────────
@@ -250,27 +251,69 @@ export class AcademicArchitectService {
     });
   }
 
-  async deleteAssignment(assignmentId: string) {
-    return this.prisma.teachingAssignment.delete({
+  async deleteAssignment(assignmentId: string, deletedById?: string) {
+    const assignment = await this.prisma.teachingAssignment.delete({
       where: { id: assignmentId },
+      include: { subject: true, classSection: true, teacher: true },
     });
+
+    if (deletedById) {
+      await this.audit.log({
+        userId: deletedById,
+        action: AuditAction.DELETE,
+        entity: 'TeachingAssignment',
+        entityId: assignmentId,
+        payload: {
+          subjectName: assignment.subject.name,
+          className: assignment.classSection.name,
+          teacherName: `${assignment.teacher.firstName} ${assignment.teacher.lastName}`,
+        },
+      });
+    }
+
+    return assignment;
   }
 
   // ─── Staff role & department management ───────────────
 
-  async updateStaffRole(staffUserId: string, role: Role) {
-    return this.prisma.user.update({
-      where: { id: staffUserId },
-      data: { role },
+  async updateStaffRole(staffUserId: string, role: Role,  changedById?: string) {
+     const updated = await this.prisma.user.update({
+    where: { id: staffUserId },
+    data: { role },
+  });
+
+  if (changedById) {
+    await this.audit.log({
+      userId: changedById,
+      action: AuditAction.UPDATE,
+      entity: 'User',
+      entityId: staffUserId,
+      payload: { newRole: role },
     });
   }
 
-  async updateStaffDepartment(staffId: string, departmentId: string | null) {
-    return this.prisma.staffProfile.update({
-      where: { id: staffId },
-      data: { departmentId },
+  return updated;
+}
+
+  async updateStaffDepartment(staffId: string, departmentId: string | null, changedById?: string) {
+
+     const updated = await this.prisma.staffProfile.update({
+    where: { id: staffId },
+    data: { departmentId },
+  });
+
+  if (changedById) {
+    await this.audit.log({
+      userId: changedById,
+      action: AuditAction.UPDATE,
+      entity: 'StaffProfile',
+      entityId: staffId,
+      payload: { departmentId },
     });
   }
+
+  return updated;
+}
 
   // ─── Term unlock (with audit trail) ────────────────────
 

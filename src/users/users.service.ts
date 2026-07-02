@@ -1,6 +1,6 @@
 import { Injectable, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { Role, Gender } from '@prisma/client';
+import { Role, Gender, AuditAction } from '@prisma/client';
 import * as argon2 from 'argon2';
 
 export interface CreateStaffDto {
@@ -45,9 +45,10 @@ export interface CreateParentDto {
 
 @Injectable()
 export class UsersService {
+  audit: any;
   constructor(private prisma: PrismaService) {}
 
-  async createStaff(dto: CreateStaffDto) {
+  async createStaff(dto: CreateStaffDto, createdById?: string) {
     const exists = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -55,7 +56,7 @@ export class UsersService {
 
     const passwordHash = await argon2.hash(dto.password);
 
-    return this.prisma.user.create({
+    const result = await this.prisma.user.create({
       data: {
         email: dto.email,
         passwordHash,
@@ -74,9 +75,21 @@ export class UsersService {
       },
       include: { staffProfile: true },
     });
+
+     if (createdById) {
+      await this.audit.log({
+        userId: createdById,
+        action: AuditAction.CREATE,
+        entity: 'StaffProfile',
+        entityId: result.staffProfile?.id ?? result.id,
+        payload: { staffId: dto.staffId, role: dto.role, email: dto.email },
+      });
+    }
+
+    return result;
   }
 
-  async createStudent(dto: CreateStudentDto) {
+  async createStudent(dto: CreateStudentDto, createdById?: string) {
     const indexExists = await this.prisma.studentProfile.findUnique({
       where: { indexNumber: dto.indexNumber },
     });
@@ -108,6 +121,16 @@ export class UsersService {
       },
       include: { studentProfile: { include: { currentClass: true, department: true } } },
     });
+
+     if (createdById) {
+      await this.audit.log({
+        userId: createdById,
+        action: AuditAction.CREATE,
+        entity: 'StudentProfile',
+        entityId: student.studentProfile?.id ?? student.id,
+        payload: { indexNumber: dto.indexNumber },
+      });
+    }
 
     // Handle parent creation if info provided
     if (dto.parentFirstName && dto.parentLastName && dto.parentPhone) {
@@ -159,6 +182,8 @@ export class UsersService {
 
     return student;
   }
+
+  
 
   async createParent(dto: CreateParentDto) {
     const email = dto.email || `${dto.phone}@parent.com`;
@@ -258,11 +283,23 @@ export class UsersService {
     });
   }
 
-  async deactivateUser(userId: string) {
-    return this.prisma.user.update({
+  async deactivateUser(userId: string, deactivatedById?: string) {
+    const updated = await this.prisma.user.update({
       where: { id: userId },
       data: { isActive: false },
     });
+
+    if (deactivatedById) {
+      await this.audit.log({
+        userId: deactivatedById,
+        action: AuditAction.DELETE,
+        entity: 'User',
+        entityId: userId,
+        payload: { deactivated: true },
+      });
+    }
+
+    return updated;
   }
 
   //csv logics

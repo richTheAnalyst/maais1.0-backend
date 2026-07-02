@@ -1,6 +1,6 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { GradeRemark, Role } from '@prisma/client';
+import { AuditAction, GradeRemark, Role } from '@prisma/client';
 
 // GH SHS Standard WAEC grading
 const GRADE_BOUNDARIES = [
@@ -121,6 +121,7 @@ export interface CorrectGradeDto {
 
 @Injectable()
 export class GradingService {
+  [x: string]: any;
   constructor(private prisma: PrismaService) {}
 
   /**
@@ -260,6 +261,22 @@ async upsertGrade(dto: UpsertGradeDto, submittedById: string) {
     include: { student: true, subject: true },
   });
 
+    // Log after successful upsert
+    await this.audit.log({
+      userId: submittedById,
+      action: AuditAction.UPDATE,
+      entity: 'GradeEntry',
+      entityId: entry.id,
+      payload: {
+        studentId: dto.studentId,
+        subjectId: dto.subjectId,
+        termId: dto.termId,
+        classScore: dto.classScore,
+        examScore: dto.examScore,
+        totalScore: entry.totalScore,
+        grade: entry.grade,
+      },
+    });
   return entry;
 }
 
@@ -295,11 +312,21 @@ async approveGrade(gradeEntryId: string, approvedById: string, userRole: Role) {
     }
   }
 
-  return this.prisma.gradeEntry.update({
-    where: { id: gradeEntryId },
-    data: { isApproved: true, approvedById, approvedAt: new Date() },
-  });
-}
+  const updated = await this.prisma.gradeEntry.update({
+      where: { id: gradeEntryId },
+      data: { isApproved: true, approvedById, approvedAt: new Date() },
+    });
+
+    await this.audit.log({
+      userId: approvedById,
+      action: AuditAction.UPDATE,
+      entity: 'GradeEntry',
+      entityId: gradeEntryId,
+      payload: { approved: true },
+    });
+
+    return updated;
+  }
 
 /**
  * Bulk approve — HOD can only approve entries for their department's subjects.
@@ -391,29 +418,34 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
       throw new ForbiddenException('Only HODs or above can lock grade entries');
     }
 
-    return this.prisma.gradeEntry.update({
+   const updated = await this.prisma.gradeEntry.update({
       where: { id: gradeEntryId },
       data: { isLocked: true, lockedById, lockedAt: new Date() },
     });
+
+    await this.audit.log({
+      userId: lockedById,
+      action: AuditAction.LOCK,
+      entity: 'GradeEntry',
+      entityId: gradeEntryId,
+      payload: { locked: true },
+    });
+
+    return updated;
   }
 
   /**
    * Record a grade correction with reason (audit trail)
    */
-  async correctGrade(dto: CorrectGradeDto, changedById: string) {
+    async correctGrade(dto: CorrectGradeDto, changedById: string) {
     const entry = await this.prisma.gradeEntry.findUniqueOrThrow({
       where: { id: dto.gradeEntryId },
     });
 
-    if (entry.isLocked) {
-      throw new ForbiddenException('Grade is locked. Contact HOD to unlock.');
-    }
+    if (entry.isLocked) throw new ForbiddenException('Grade is locked.');
 
-    const oldValue = String(
-      entry[dto.fieldChanged as keyof typeof entry] ?? '',
-    );
+    const oldValue = String(entry[dto.fieldChanged as keyof typeof entry] ?? '');
 
-    // Record the correction
     await this.prisma.gradeCorrection.create({
       data: {
         gradeEntryId: dto.gradeEntryId,
@@ -425,31 +457,37 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
       },
     });
 
-    // Apply correction
     const updateData: Record<string, any> = {
-      [dto.fieldChanged]:
-        dto.fieldChanged === 'remark' ? dto.newValue : parseFloat(dto.newValue),
+      [dto.fieldChanged]: dto.fieldChanged === 'remark' ? dto.newValue : parseFloat(dto.newValue),
     };
 
-    // Recompute total/grade if score changed
     if (dto.fieldChanged === 'classScore' || dto.fieldChanged === 'examScore') {
-      const cs =
-        dto.fieldChanged === 'classScore'
-          ? parseFloat(dto.newValue)
-          : (entry.classScore ?? 0);
-      const es =
-        dto.fieldChanged === 'examScore'
-          ? parseFloat(dto.newValue)
-          : (entry.examScore ?? 0);
+      const cs = dto.fieldChanged === 'classScore' ? parseFloat(dto.newValue) : (entry.classScore ?? 0);
+      const es = dto.fieldChanged === 'examScore' ? parseFloat(dto.newValue) : (entry.examScore ?? 0);
       const computed = this.computeGrade(cs, es);
       updateData.totalScore = computed.totalScore;
       updateData.grade = computed.grade;
     }
 
-    return this.prisma.gradeEntry.update({
+    const corrected = await this.prisma.gradeEntry.update({
       where: { id: dto.gradeEntryId },
       data: updateData,
     });
+
+    await this.audit.log({
+      userId: changedById,
+      action: AuditAction.GRADE_CORRECTION,
+      entity: 'GradeEntry',
+      entityId: dto.gradeEntryId,
+      payload: {
+        fieldChanged: dto.fieldChanged,
+        oldValue,
+        newValue: dto.newValue,
+        reason: dto.reason,
+      },
+    });
+
+    return corrected;
   }
 
   /**
@@ -567,10 +605,20 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
       );
     }
 
-    return this.prisma.gradeEntry.update({
+     const updated = await this.prisma.gradeEntry.update({
       where: { id: gradeEntryId },
       data: { isLocked: false, lockedById: null, lockedAt: null },
     });
+
+    await this.audit.log({
+      userId: unlockedById,
+      action: AuditAction.UNLOCK,
+      entity: 'GradeEntry',
+      entityId: gradeEntryId,
+      payload: { locked: false },
+    });
+
+    return updated;
   }
 
   /**

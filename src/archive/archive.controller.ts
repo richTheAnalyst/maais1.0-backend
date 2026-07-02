@@ -25,12 +25,11 @@ export class ArchiveController {
     return this.archiveService.searchVault(query);
   }
 
-  @Patch('terms/:id/lock')
-  @Roles(Role.HEADMASTER, Role.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Lock a term' })
-  lockTerm(@Param('id') id: string) {
-    return this.archiveService.lockTerm(id);
-  }
+ @Patch('terms/:id/lock')
+@Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
+lockTerm(@Param('id') id: string, @CurrentUser('id') userId: string) {
+  return this.archiveService.lockTerm(id, userId);  // ← pass userId
+}
 
   @Get('health')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER,Role.HOD, Role.TEACHER)
@@ -52,4 +51,5 @@ advanceTerm(@Param('id') id: string) {
 getPromotionReadiness(@Param('academicYearId') academicYearId: string) {
   return this.archiveService.getPromotionReadiness(academicYearId);
 }
+
 }

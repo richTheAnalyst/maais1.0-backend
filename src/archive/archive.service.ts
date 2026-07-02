@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { ClassLevel, PromotionStatus } from '@prisma/client';
+import { AuditAction, ClassLevel, PromotionStatus } from '@prisma/client';
 
 const PROMOTION_MAP: Record<ClassLevel, ClassLevel | null> = {
   [ClassLevel.FORM_1]: ClassLevel.FORM_2,
@@ -10,7 +10,61 @@ const PROMOTION_MAP: Record<ClassLevel, ClassLevel | null> = {
 
 @Injectable()
 export class ArchiveService {
+  audit: any;
   constructor(private prisma: PrismaService) {}
+
+   /**
+   * Lock a term (prevents further grade edits)
+   */
+  async lockTerm(termId: string, lockedById?: string) {
+    const updated = await this.prisma.term.update({
+      where: { id: termId },
+      data: { isLocked: true },
+    });
+
+    if (lockedById) {
+      await this.audit.log({
+        userId: lockedById,
+        action: AuditAction.LOCK,
+        entity: 'Term',
+        entityId: termId,
+        payload: { locked: true },
+      });
+    }
+
+    return updated;
+  }
+
+  async unlockTerm(termId: string, unlockedById: string, reason: string) {
+    const term = await this.prisma.term.findUniqueOrThrow({
+      where: { id: termId },
+      include: { _count: { select: { reportCards: true } } },
+    });
+
+    const unlocked = await this.prisma.term.update({
+      where: { id: termId },
+      data: { isLocked: false },
+    });
+
+    await this.audit.log({
+      userId: unlockedById,
+      action: AuditAction.UNLOCK,
+      entity: 'Term',
+      entityId: termId,
+      payload: {
+        reason,
+        existingReportCards: term._count.reportCards,
+        warning: term._count.reportCards > 0
+          ? 'Term had generated report cards at time of unlock — they may now be stale.'
+          : null,
+      },
+    });
+
+    return {
+      ...unlocked,
+      existingReportCardsWarning: term._count.reportCards > 0 ? term._count.reportCards : null,
+    };
+  }
 
   async runPromotionCycle(academicYearId: string, performedById: string) {
     const year = await this.prisma.academicYear.findUniqueOrThrow({
@@ -94,6 +148,19 @@ export class ArchiveService {
     // Bulk insert promotion records
     await this.prisma.promotionRecord.createMany({ data: promotionRecords });
 
+    await this.audit.log({
+      userId: performedById,
+      action: AuditAction.PROMOTE,
+      entity: 'AcademicYear',
+      entityId: academicYearId,
+      payload: {
+        totalProcessed: students.length,
+        promoted: promotionRecords.filter(r => r.status === 'PROMOTED').length,
+        graduated: graduates.length,
+        academicYear: year.label,
+      },
+    });
+
     return {
       academicYear: year.label,
       totalProcessed: students.length,
@@ -151,15 +218,8 @@ export class ArchiveService {
     });
   }
 
-  /**
-   * Lock a term (prevents further grade edits)
-   */
-  async lockTerm(termId: string) {
-    return this.prisma.term.update({
-      where: { id: termId },
-      data: { isLocked: true },
-    });
-  }
+ 
+  
 
   /**
    * Database health check with hash verification summary

@@ -157,22 +157,30 @@ getAllAssignments() {
 @Delete('assignments/:id')
 @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
 @ApiOperation({ summary: 'Remove a teaching assignment' })
-deleteAssignment(@Param('id') id: string) {
-  return this.service.deleteAssignment(id);
+deleteAssignment(@Param('id') id: string, @CurrentUser('id') userId: string) {
+  return this.service.deleteAssignment(id, userId);
 }
 
 @Patch('staff/:userId/role')
 @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
 @ApiOperation({ summary: 'Change a staff member\'s system role' })
-updateStaffRole(@Param('userId') userId: string, @Body('role') role: Role) {
-  return this.service.updateStaffRole(userId, role);
+updateStaffRole(
+  @Param('userId') staffUserId: string,
+  @Body('role') role: Role,
+  @CurrentUser('id') requesterId: string,
+) {
+  return this.service.updateStaffRole(staffUserId, role, requesterId);
 }
 
 @Patch('staff/:staffId/department')
 @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
 @ApiOperation({ summary: 'Change a staff member\'s department' })
-updateStaffDepartment(@Param('staffId') staffId: string, @Body('departmentId') departmentId: string | null) {
-  return this.service.updateStaffDepartment(staffId, departmentId);
+updateStaffDepartment(
+  @Param('staffId') staffId: string,
+  @Body('departmentId') departmentId: string | null,
+  @CurrentUser('id') requesterId: string,
+) {
+  return this.service.updateStaffDepartment(staffId, departmentId, requesterId);
 }
 
 @Patch('terms/:id/unlock')
