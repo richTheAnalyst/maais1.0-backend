@@ -121,7 +121,6 @@ export interface CorrectGradeDto {
 
 @Injectable()
 export class GradingService {
-  [x: string]: any;
   constructor(private prisma: PrismaService) {}
 
   /**
@@ -262,7 +261,8 @@ async upsertGrade(dto: UpsertGradeDto, submittedById: string) {
   });
 
     // Log after successful upsert
-    await this.audit.log({
+   await this.prisma.auditLog.create({
+    data: {
       userId: submittedById,
       action: AuditAction.UPDATE,
       entity: 'GradeEntry',
@@ -276,7 +276,8 @@ async upsertGrade(dto: UpsertGradeDto, submittedById: string) {
         totalScore: entry.totalScore,
         grade: entry.grade,
       },
-    });
+    },
+  });
   return entry;
 }
 
@@ -317,13 +318,15 @@ async approveGrade(gradeEntryId: string, approvedById: string, userRole: Role) {
       data: { isApproved: true, approvedById, approvedAt: new Date() },
     });
 
-    await this.audit.log({
+    await this.prisma.auditLog.create({
+    data: {
       userId: approvedById,
       action: AuditAction.UPDATE,
       entity: 'GradeEntry',
       entityId: gradeEntryId,
       payload: { approved: true },
-    });
+    },
+  });
 
     return updated;
   }
@@ -423,13 +426,15 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
       data: { isLocked: true, lockedById, lockedAt: new Date() },
     });
 
-    await this.audit.log({
+    await this.prisma.auditLog.create({
+    data: {
       userId: lockedById,
       action: AuditAction.LOCK,
       entity: 'GradeEntry',
       entityId: gradeEntryId,
       payload: { locked: true },
-    });
+    },
+  });
 
     return updated;
   }
@@ -474,7 +479,8 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
       data: updateData,
     });
 
-    await this.audit.log({
+   await this.prisma.auditLog.create({
+    data: {
       userId: changedById,
       action: AuditAction.GRADE_CORRECTION,
       entity: 'GradeEntry',
@@ -485,7 +491,8 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
         newValue: dto.newValue,
         reason: dto.reason,
       },
-    });
+    },
+  });
 
     return corrected;
   }
@@ -610,13 +617,15 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
       data: { isLocked: false, lockedById: null, lockedAt: null },
     });
 
-    await this.audit.log({
+   await this.prisma.auditLog.create({
+    data: {
       userId: unlockedById,
       action: AuditAction.UNLOCK,
       entity: 'GradeEntry',
       entityId: gradeEntryId,
       payload: { locked: false },
-    });
+    },
+  });
 
     return updated;
   }
