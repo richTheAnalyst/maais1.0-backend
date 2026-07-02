@@ -8,7 +8,6 @@ import { TermNumber, ClassLevel, SubjectType, Role, AuditAction } from '@prisma/
 
 @Injectable()
 export class AcademicArchitectService {
-  audit: any;
   constructor(private prisma: PrismaService) {}
 
   // ─── Academic Years ───────────────────────────────────
@@ -163,6 +162,7 @@ export class AcademicArchitectService {
       orderBy: [{ level: 'asc' }, { name: 'asc' }],
     });
   }
+
   async deleteClassSection(id: string) {
     const classSection = await this.prisma.classSection.findUnique({
       where: { id },
@@ -258,15 +258,17 @@ export class AcademicArchitectService {
     });
 
     if (deletedById) {
-      await this.audit.log({
-        userId: deletedById,
-        action: AuditAction.DELETE,
-        entity: 'TeachingAssignment',
-        entityId: assignmentId,
-        payload: {
-          subjectName: assignment.subject.name,
-          className: assignment.classSection.name,
-          teacherName: `${assignment.teacher.firstName} ${assignment.teacher.lastName}`,
+      await this.prisma.auditLog.create({
+        data: {
+          userId: deletedById,
+          action: AuditAction.DELETE,
+          entity: 'TeachingAssignment',
+          entityId: assignmentId,
+          payload: {
+            subjectName: assignment.subject.name,
+            className: assignment.classSection.name,
+            teacherName: `${assignment.teacher.firstName} ${assignment.teacher.lastName}`,
+          },
         },
       });
     }
@@ -276,44 +278,47 @@ export class AcademicArchitectService {
 
   // ─── Staff role & department management ───────────────
 
-  async updateStaffRole(staffUserId: string, role: Role,  changedById?: string) {
-     const updated = await this.prisma.user.update({
-    where: { id: staffUserId },
-    data: { role },
-  });
-
-  if (changedById) {
-    await this.audit.log({
-      userId: changedById,
-      action: AuditAction.UPDATE,
-      entity: 'User',
-      entityId: staffUserId,
-      payload: { newRole: role },
+  async updateStaffRole(staffUserId: string, role: Role, changedById?: string) {
+    const updated = await this.prisma.user.update({
+      where: { id: staffUserId },
+      data: { role },
     });
-  }
 
-  return updated;
-}
+    if (changedById) {
+      await this.prisma.auditLog.create({
+        data: {
+          userId: changedById,
+          action: AuditAction.UPDATE,
+          entity: 'User',
+          entityId: staffUserId,
+          payload: { newRole: role },
+        },
+      });
+    }
+
+    return updated;
+  }
 
   async updateStaffDepartment(staffId: string, departmentId: string | null, changedById?: string) {
-
-     const updated = await this.prisma.staffProfile.update({
-    where: { id: staffId },
-    data: { departmentId },
-  });
-
-  if (changedById) {
-    await this.audit.log({
-      userId: changedById,
-      action: AuditAction.UPDATE,
-      entity: 'StaffProfile',
-      entityId: staffId,
-      payload: { departmentId },
+    const updated = await this.prisma.staffProfile.update({
+      where: { id: staffId },
+      data: { departmentId },
     });
-  }
 
-  return updated;
-}
+    if (changedById) {
+      await this.prisma.auditLog.create({
+        data: {
+          userId: changedById,
+          action: AuditAction.UPDATE,
+          entity: 'StaffProfile',
+          entityId: staffId,
+          payload: { departmentId },
+        },
+      });
+    }
+
+    return updated;
+  }
 
   // ─── Term unlock (with audit trail) ────────────────────
 
@@ -414,101 +419,101 @@ export class AcademicArchitectService {
   }
 
   /**
- * Get assignments for a specific teacher — used to scope the grading sheet.
- */
-async getMyGradingScope(userId: string) {
-  const user = await this.prisma.user.findUniqueOrThrow({
-    where: { id: userId },
-    include: { staffProfile: true },
-  });
+   * Get assignments for a specific teacher — used to scope the grading sheet.
+   */
+  async getMyGradingScope(userId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      include: { staffProfile: true },
+    });
 
-  if (!user.staffProfile) return { subjects: [], classes: [] };
+    if (!user.staffProfile) return { subjects: [], classes: [] };
 
-  if (user.role === Role.TEACHER) {
-    // Return only assigned subject+class pairs
-    const assignments = await this.prisma.teachingAssignment.findMany({
-      where: { teacherId: user.staffProfile.id },
-      include: {
-        subject: { include: { department: true } },
-        classSection: true,
+    if (user.role === Role.TEACHER) {
+      // Return only assigned subject+class pairs
+      const assignments = await this.prisma.teachingAssignment.findMany({
+        where: { teacherId: user.staffProfile.id },
+        include: {
+          subject: { include: { department: true } },
+          classSection: true,
+        },
+      });
+
+      return {
+        role: 'TEACHER',
+        assignments: assignments.map(a => ({
+          subjectId: a.subjectId,
+          subjectName: a.subject.name,
+          subjectCode: a.subject.code,
+          subjectType: a.subject.type,
+          classSectionId: a.classSectionId,
+          className: a.classSection.name,
+          classLevel: a.classSection.level,
+        })),
+      };
+    }
+
+    if (user.role === Role.HOD) {
+      // Return all subjects in their department, and all classes in the school
+      const subjects = await this.prisma.subject.findMany({
+        where: { departmentId: user.staffProfile.departmentId ?? undefined, isActive: true },
+      });
+
+      const classes = await this.prisma.classSection.findMany({
+        orderBy: [{ level: 'asc' }, { name: 'asc' }],
+      });
+
+      return {
+        role: 'HOD',
+        departmentId: user.staffProfile.departmentId,
+        subjects: subjects.map(s => ({
+          subjectId: s.id,
+          subjectName: s.name,
+          subjectCode: s.code,
+          subjectType: s.type,
+        })),
+        classes: classes.map(c => ({
+          classSectionId: c.id,
+          className: c.name,
+          classLevel: c.level,
+        })),
+      };
+    }
+
+    // Admin/Headmaster — return everything
+    const subjects = await this.prisma.subject.findMany({ where: { isActive: true } });
+    const classes = await this.prisma.classSection.findMany();
+    return {
+      role: user.role,
+      subjects: subjects.map(s => ({ subjectId: s.id, subjectName: s.name, subjectCode: s.code, subjectType: s.type })),
+      classes: classes.map(c => ({ classSectionId: c.id, className: c.name, classLevel: c.level })),
+    };
+  }
+
+  //audit logs function
+  async getAuditLogs(filters: {
+    entity?: string;
+    action?: string;
+    userId?: string;
+    take?: number;
+  }) {
+    return this.prisma.auditLog.findMany({
+      where: {
+        ...(filters.entity && { entity: filters.entity }),
+        ...(filters.action && { action: filters.action as any }),
+        ...(filters.userId && { userId: filters.userId }),
       },
-    });
-
-    return {
-      role: 'TEACHER',
-      assignments: assignments.map(a => ({
-        subjectId: a.subjectId,
-        subjectName: a.subject.name,
-        subjectCode: a.subject.code,
-        subjectType: a.subject.type,
-        classSectionId: a.classSectionId,
-        className: a.classSection.name,
-        classLevel: a.classSection.level,
-      })),
-    };
-  }
-
-  if (user.role === Role.HOD) {
-    // Return all subjects in their department, and all classes in the school
-    const subjects = await this.prisma.subject.findMany({
-      where: { departmentId: user.staffProfile.departmentId ?? undefined, isActive: true },
-    });
-
-    const classes = await this.prisma.classSection.findMany({
-      orderBy: [{ level: 'asc' }, { name: 'asc' }],
-    });
-
-    return {
-      role: 'HOD',
-      departmentId: user.staffProfile.departmentId,
-      subjects: subjects.map(s => ({
-        subjectId: s.id,
-        subjectName: s.name,
-        subjectCode: s.code,
-        subjectType: s.type,
-      })),
-      classes: classes.map(c => ({
-        classSectionId: c.id,
-        className: c.name,
-        classLevel: c.level,
-      })),
-    };
-  }
-
-  // Admin/Headmaster — return everything
-  const subjects = await this.prisma.subject.findMany({ where: { isActive: true } });
-  const classes = await this.prisma.classSection.findMany();
-  return {
-    role: user.role,
-    subjects: subjects.map(s => ({ subjectId: s.id, subjectName: s.name, subjectCode: s.code, subjectType: s.type })),
-    classes: classes.map(c => ({ classSectionId: c.id, className: c.name, classLevel: c.level })),
-  };
-}
-
-//audit logs function
-async getAuditLogs(filters: {
-  entity?: string;
-  action?: string;
-  userId?: string;
-  take?: number;
-}) {
-  return this.prisma.auditLog.findMany({
-    where: {
-      ...(filters.entity && { entity: filters.entity }),
-      ...(filters.action && { action: filters.action as any }),
-      ...(filters.userId && { userId: filters.userId }),
-    },
-    include: {
-      user: {
-        select: {
-          email: true,
-          role: true,
-          staffProfile: { select: { firstName: true, lastName: true, staffId: true } },
+      include: {
+        user: {
+          select: {
+            email: true,
+            role: true,
+            staffProfile: { select: { firstName: true, lastName: true, staffId: true } },
+          },
         },
       },
-    },
-    orderBy: { createdAt: 'desc' },
-    take: filters.take ?? 50,
-  });
-}
+      orderBy: { createdAt: 'desc' },
+      take: filters.take ?? 50,
+    });
+  }
 }

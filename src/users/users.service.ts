@@ -45,7 +45,6 @@ export interface CreateParentDto {
 
 @Injectable()
 export class UsersService {
-  audit: any;
   constructor(private prisma: PrismaService) {}
 
   async createStaff(dto: CreateStaffDto, createdById?: string) {
@@ -76,13 +75,15 @@ export class UsersService {
       include: { staffProfile: true },
     });
 
-     if (createdById) {
-      await this.audit.log({
-        userId: createdById,
-        action: AuditAction.CREATE,
-        entity: 'StaffProfile',
-        entityId: result.staffProfile?.id ?? result.id,
-        payload: { staffId: dto.staffId, role: dto.role, email: dto.email },
+    if (createdById) {
+      await this.prisma.auditLog.create({
+        data: {
+          userId: createdById,
+          action: AuditAction.CREATE,
+          entity: 'StaffProfile',
+          entityId: result.staffProfile?.id ?? result.id,
+          payload: { staffId: dto.staffId, role: dto.role, email: dto.email },
+        },
       });
     }
 
@@ -122,13 +123,15 @@ export class UsersService {
       include: { studentProfile: { include: { currentClass: true, department: true } } },
     });
 
-     if (createdById) {
-      await this.audit.log({
-        userId: createdById,
-        action: AuditAction.CREATE,
-        entity: 'StudentProfile',
-        entityId: student.studentProfile?.id ?? student.id,
-        payload: { indexNumber: dto.indexNumber },
+    if (createdById) {
+      await this.prisma.auditLog.create({
+        data: {
+          userId: createdById,
+          action: AuditAction.CREATE,
+          entity: 'StudentProfile',
+          entityId: student.studentProfile?.id ?? student.id,
+          payload: { indexNumber: dto.indexNumber },
+        },
       });
     }
 
@@ -182,8 +185,6 @@ export class UsersService {
 
     return student;
   }
-
-  
 
   async createParent(dto: CreateParentDto) {
     const email = dto.email || `${dto.phone}@parent.com`;
@@ -290,90 +291,93 @@ export class UsersService {
     });
 
     if (deactivatedById) {
-      await this.audit.log({
-        userId: deactivatedById,
-        action: AuditAction.DELETE,
-        entity: 'User',
-        entityId: userId,
-        payload: { deactivated: true },
+      await this.prisma.auditLog.create({
+        data: {
+          userId: deactivatedById,
+          action: AuditAction.DELETE,
+          entity: 'User',
+          entityId: userId,
+          payload: { deactivated: true },
+        },
       });
     }
 
     return updated;
   }
 
-  //csv logics
+  // ─── CSV Bulk Operations ───────────────────────────────────
+
   async bulkCreateStudents(rows: CreateStudentDto[]) {
-  const results: { row: number; success: boolean; error?: string; indexNumber?: string }[] = [];
+    const results: { row: number; success: boolean; error?: string; indexNumber?: string }[] = [];
 
-  for (let i = 0; i < rows.length; i++) {
-    const dto = rows[i];
-    try {
-      await this.createStudent(dto);
-      results.push({ row: i + 1, success: true, indexNumber: dto.indexNumber });
-    } catch (err: any) {
-      results.push({ row: i + 1, success: false, error: err.message, indexNumber: dto.indexNumber });
+    for (let i = 0; i < rows.length; i++) {
+      const dto = rows[i];
+      try {
+        await this.createStudent(dto);
+        results.push({ row: i + 1, success: true, indexNumber: dto.indexNumber });
+      } catch (err: any) {
+        results.push({ row: i + 1, success: false, error: err.message, indexNumber: dto.indexNumber });
+      }
     }
+
+    return {
+      total: rows.length,
+      succeeded: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length,
+      results,
+    };
   }
 
-  return {
-    total: rows.length,
-    succeeded: results.filter(r => r.success).length,
-    failed: results.filter(r => !r.success).length,
-    results,
-  };
-}
+  async bulkCreateStaff(rows: CreateStaffDto[]) {
+    const results: { row: number; success: boolean; error?: string; staffId?: string }[] = [];
 
-async bulkCreateStaff(rows: CreateStaffDto[]) {
-  const results: { row: number; success: boolean; error?: string; staffId?: string }[] = [];
-
-  for (let i = 0; i < rows.length; i++) {
-    const dto = rows[i];
-    try {
-      await this.createStaff(dto);
-      results.push({ row: i + 1, success: true, staffId: dto.staffId });
-    } catch (err: any) {
-      results.push({ row: i + 1, success: false, error: err.message, staffId: dto.staffId });
+    for (let i = 0; i < rows.length; i++) {
+      const dto = rows[i];
+      try {
+        await this.createStaff(dto);
+        results.push({ row: i + 1, success: true, staffId: dto.staffId });
+      } catch (err: any) {
+        results.push({ row: i + 1, success: false, error: err.message, staffId: dto.staffId });
+      }
     }
+
+    return {
+      total: rows.length,
+      succeeded: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length,
+      results,
+    };
   }
 
-  return {
-    total: rows.length,
-    succeeded: results.filter(r => r.success).length,
-    failed: results.filter(r => !r.success).length,
-    results,
-  };
-}
+  async exportStudentsCSV(user?: { id: string; role: Role }) {
+    const students = await this.getAllStudents(user);
+    return students.map(s => ({
+      indexNumber: s.indexNumber,
+      firstName: s.firstName,
+      lastName: s.lastName,
+      middleName: s.middleName ?? '',
+      gender: s.gender,
+      dateOfBirth: s.dateOfBirth ? s.dateOfBirth.toISOString().split('T')[0] : '',
+      email: s.user?.email ?? '',
+      currentClass: s.currentClass ? `${s.currentClass.level}|${s.currentClass.name}` : '',
+      department: s.department?.name ?? '',
+      isActive: s.user?.isActive ?? true,
+    }));
+  }
 
-async exportStudentsCSV(user?: { id: string; role: Role }) {
-  const students = await this.getAllStudents(user);
-  return students.map(s => ({
-    indexNumber: s.indexNumber,
-    firstName: s.firstName,
-    lastName: s.lastName,
-    middleName: s.middleName ?? '',
-    gender: s.gender,
-    dateOfBirth: s.dateOfBirth ? s.dateOfBirth.toISOString().split('T')[0] : '',
-    email: s.user?.email ?? '',
-    currentClass: s.currentClass ? `${s.currentClass.level}|${s.currentClass.name}` : '',
-    department: s.department?.name ?? '',
-    isActive: s.user?.isActive ?? true,
-  }));
-}
-
-async exportStaffCSV(user?: { id: string; role: Role }) {
-  const staff = await this.getAllStaff(user);
-  return staff.map(s => ({
-    staffId: s.staffId,
-    firstName: s.firstName,
-    lastName: s.lastName,
-    middleName: s.middleName ?? '',
-    gender: s.gender,
-    phone: s.phone ?? '',
-    email: s.user?.email ?? '',
-    role: s.user?.role ?? '',
-    department: s.department?.name ?? '',
-    isActive: s.user?.isActive ?? true,
-  }));
-}
+  async exportStaffCSV(user?: { id: string; role: Role }) {
+    const staff = await this.getAllStaff(user);
+    return staff.map(s => ({
+      staffId: s.staffId,
+      firstName: s.firstName,
+      lastName: s.lastName,
+      middleName: s.middleName ?? '',
+      gender: s.gender,
+      phone: s.phone ?? '',
+      email: s.user?.email ?? '',
+      role: s.user?.role ?? '',
+      department: s.department?.name ?? '',
+      isActive: s.user?.isActive ?? true,
+    }));
+  }
 }
