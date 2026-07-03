@@ -120,7 +120,9 @@ export class UsersService {
           },
         },
       },
-      include: { studentProfile: { include: { currentClass: true, department: true } } },
+      include: {
+        studentProfile: { include: { currentClass: true, department: true } },
+      },
     });
 
     if (createdById) {
@@ -191,7 +193,8 @@ export class UsersService {
     const exists = await this.prisma.user.findUnique({
       where: { email },
     });
-    if (exists) throw new ConflictException('Parent email/phone already in use');
+    if (exists)
+      throw new ConflictException('Parent email/phone already in use');
 
     const passwordHash = await argon2.hash(dto.password || 'Parent@123!');
 
@@ -216,29 +219,84 @@ export class UsersService {
   }
 
   async getAllStudents(user?: { id: string; role: Role }) {
-    let departmentId: string | undefined;
-
+    // HOD: scope to their department
     if (user?.role === Role.HOD) {
-      const staff = await this.prisma.staffProfile.findUnique({
+      const staff = await this.prisma.staffProfile.findFirst({
         where: { userId: user.id },
+        select: { departmentId: true },
       });
-      departmentId = staff?.departmentId || undefined;
+      const departmentId = staff?.departmentId;
+
+      return this.prisma.studentProfile.findMany({
+        where: {
+          archivedAt: null,
+          ...(departmentId
+            ? {
+                currentClass: {
+                  teachingAssignments: { some: { teacher: { departmentId } } },
+                },
+              }
+            : {}),
+        },
+        include: {
+          user: { select: { id: true, email: true, isActive: true } },
+          currentClass: true,
+          department: true,
+          reportCards: { select: { id: true } },
+          grades: { select: { id: true, totalScore: true } },
+        },
+        orderBy: { lastName: 'asc' },
+      });
     }
 
+    // TEACHER: scope strictly to their assigned classes only
+    if (user?.role === Role.TEACHER) {
+      const staff = await this.prisma.staffProfile.findFirst({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+
+      if (!staff) return [];
+
+      // Get the class IDs this teacher is assigned to
+      const assignments = await this.prisma.teachingAssignment.findMany({
+        where: { teacherId: staff.id },
+        select: { classSectionId: true },
+      });
+
+      const classIds = [...new Set(assignments.map((a) => a.classSectionId))];
+
+      if (classIds.length === 0) return [];
+
+      return this.prisma.studentProfile.findMany({
+        where: {
+          archivedAt: null,
+          currentClassId: { in: classIds },
+        },
+        include: {
+          user: { select: { id: true, email: true, isActive: true } },
+          currentClass: true,
+          department: true,
+          reportCards: { select: { id: true } },
+          grades: { select: { id: true, totalScore: true } },
+        },
+        orderBy: { lastName: 'asc' },
+      });
+    }
+
+    // ADMIN/HEADMASTER: see everyone
     return this.prisma.studentProfile.findMany({
-      where: {
-        archivedAt: null,
-        ...(departmentId ? { departmentId } : {}),
-      },
+      where: { archivedAt: null },
       include: {
+        user: { select: { id: true, email: true, isActive: true } },
         currentClass: true,
         department: true,
-        user: { select: { email: true, isActive: true } },
+        reportCards: { select: { id: true } },
+        grades: { select: { id: true, totalScore: true } },
       },
-      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      orderBy: { lastName: 'asc' },
     });
   }
-
   async getStudentProfile(studentId: string, requesterRole?: Role) {
     return this.prisma.studentProfile.findUniqueOrThrow({
       where: { id: studentId },
@@ -308,28 +366,47 @@ export class UsersService {
   // ─── CSV Bulk Operations ───────────────────────────────────
 
   async bulkCreateStudents(rows: CreateStudentDto[]) {
-    const results: { row: number; success: boolean; error?: string; indexNumber?: string }[] = [];
+    const results: {
+      row: number;
+      success: boolean;
+      error?: string;
+      indexNumber?: string;
+    }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
       const dto = rows[i];
       try {
         await this.createStudent(dto);
-        results.push({ row: i + 1, success: true, indexNumber: dto.indexNumber });
+        results.push({
+          row: i + 1,
+          success: true,
+          indexNumber: dto.indexNumber,
+        });
       } catch (err: any) {
-        results.push({ row: i + 1, success: false, error: err.message, indexNumber: dto.indexNumber });
+        results.push({
+          row: i + 1,
+          success: false,
+          error: err.message,
+          indexNumber: dto.indexNumber,
+        });
       }
     }
 
     return {
       total: rows.length,
-      succeeded: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
+      succeeded: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
       results,
     };
   }
 
   async bulkCreateStaff(rows: CreateStaffDto[]) {
-    const results: { row: number; success: boolean; error?: string; staffId?: string }[] = [];
+    const results: {
+      row: number;
+      success: boolean;
+      error?: string;
+      staffId?: string;
+    }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
       const dto = rows[i];
@@ -337,29 +414,38 @@ export class UsersService {
         await this.createStaff(dto);
         results.push({ row: i + 1, success: true, staffId: dto.staffId });
       } catch (err: any) {
-        results.push({ row: i + 1, success: false, error: err.message, staffId: dto.staffId });
+        results.push({
+          row: i + 1,
+          success: false,
+          error: err.message,
+          staffId: dto.staffId,
+        });
       }
     }
 
     return {
       total: rows.length,
-      succeeded: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
+      succeeded: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
       results,
     };
   }
 
   async exportStudentsCSV(user?: { id: string; role: Role }) {
     const students = await this.getAllStudents(user);
-    return students.map(s => ({
+    return students.map((s) => ({
       indexNumber: s.indexNumber,
       firstName: s.firstName,
       lastName: s.lastName,
       middleName: s.middleName ?? '',
       gender: s.gender,
-      dateOfBirth: s.dateOfBirth ? s.dateOfBirth.toISOString().split('T')[0] : '',
+      dateOfBirth: s.dateOfBirth
+        ? s.dateOfBirth.toISOString().split('T')[0]
+        : '',
       email: s.user?.email ?? '',
-      currentClass: s.currentClass ? `${s.currentClass.level}|${s.currentClass.name}` : '',
+      currentClass: s.currentClass
+        ? `${s.currentClass.level}|${s.currentClass.name}`
+        : '',
       department: s.department?.name ?? '',
       isActive: s.user?.isActive ?? true,
     }));
@@ -367,7 +453,7 @@ export class UsersService {
 
   async exportStaffCSV(user?: { id: string; role: Role }) {
     const staff = await this.getAllStaff(user);
-    return staff.map(s => ({
+    return staff.map((s) => ({
       staffId: s.staffId,
       firstName: s.firstName,
       lastName: s.lastName,

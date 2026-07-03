@@ -158,222 +158,240 @@ export class GradingService {
   }
 
   /**
- * Upsert a grade entry — enforces that the submitter is assigned to
- * this subject/class combination (unless HOD/Admin/Headmaster).
- */
-async upsertGrade(dto: UpsertGradeDto, submittedById: string) {
-  const term = await this.prisma.term.findUniqueOrThrow({
-    where: { id: dto.termId },
-  });
+   * Upsert a grade entry — enforces that the submitter is assigned to
+   * this subject/class combination (unless HOD/Admin/Headmaster).
+   */
+  async upsertGrade(dto: UpsertGradeDto, submittedById: string) {
+    const term = await this.prisma.term.findUniqueOrThrow({
+      where: { id: dto.termId },
+    });
 
-  if (term.isLocked) {
-    throw new ForbiddenException('Term is locked. Grades cannot be modified.');
-  }
+    if (term.isLocked) {
+      throw new ForbiddenException(
+        'Term is locked. Grades cannot be modified.',
+      );
+    }
 
-  // Get submitter's role and staff profile
-  const submitter = await this.prisma.user.findUniqueOrThrow({
-    where: { id: submittedById },
-    include: { staffProfile: true },
-  });
+    // Get submitter's role and staff profile
+    const submitter = await this.prisma.user.findUniqueOrThrow({
+      where: { id: submittedById },
+      include: { staffProfile: true },
+    });
 
-  const isPrivileged =
-    submitter.role === Role.SUPER_ADMIN ||
-    submitter.role === Role.HEADMASTER;
+    const isPrivileged =
+      submitter.role === Role.SUPER_ADMIN || submitter.role === Role.HEADMASTER;
 
-  // TEACHER: must be assigned to this subject + class
-  if (submitter.role === Role.TEACHER && submitter.staffProfile) {
-    const assignment = await this.prisma.teachingAssignment.findFirst({
+    // TEACHER: must be assigned to this subject + class
+    if (submitter.role === Role.TEACHER && submitter.staffProfile) {
+      // Verify the student is in a class the teacher is assigned to for this subject
+      const student = await this.prisma.studentProfile.findUnique({
+        where: { id: dto.studentId },
+        select: { currentClassId: true },
+      });
+
+      if (!student) {
+        throw new ForbiddenException('Student not found.');
+      }
+
+      const assignment = await this.prisma.teachingAssignment.findFirst({
+        where: {
+          teacherId: submitter.staffProfile.id,
+          subjectId: dto.subjectId,
+          classSectionId: student.currentClassId ?? undefined,
+        },
+      });
+
+      if (!assignment) {
+        throw new ForbiddenException(
+          "You are not assigned to teach this subject for this student's class.",
+        );
+      }
+    }
+
+    // HOD: must own the department that owns the subject
+    if (submitter.role === Role.HOD && submitter.staffProfile) {
+      const subject = await this.prisma.subject.findUniqueOrThrow({
+        where: { id: dto.subjectId },
+        select: { departmentId: true },
+      });
+
+      if (subject.departmentId !== submitter.staffProfile.departmentId) {
+        throw new ForbiddenException(
+          'This subject does not belong to your department.',
+        );
+      }
+    }
+
+    let totalScore: number | undefined;
+    let grade: string | undefined;
+
+    if (dto.classScore !== undefined && dto.examScore !== undefined) {
+      const computed = this.computeGrade(dto.classScore, dto.examScore);
+      totalScore = computed.totalScore;
+      grade = computed.grade;
+    }
+
+    const entry = await this.prisma.gradeEntry.upsert({
       where: {
-        teacherId: submitter.staffProfile.id,
-        subjectId: dto.subjectId,
-        classSection: {
-          students: { some: { id: dto.studentId } },
+        studentId_subjectId_termId: {
+          studentId: dto.studentId,
+          subjectId: dto.subjectId,
+          termId: dto.termId,
         },
       },
-    });
-
-    if (!assignment) {
-      throw new ForbiddenException(
-        'You are not assigned to teach this subject for this student\'s class.',
-      );
-    }
-  }
-
-  // HOD: must own the department that owns the subject
-  if (submitter.role === Role.HOD && submitter.staffProfile) {
-    const subject = await this.prisma.subject.findUniqueOrThrow({
-      where: { id: dto.subjectId },
-      select: { departmentId: true },
-    });
-
-    if (subject.departmentId !== submitter.staffProfile.departmentId) {
-      throw new ForbiddenException(
-        'This subject does not belong to your department.',
-      );
-    }
-  }
-
-  let totalScore: number | undefined;
-  let grade: string | undefined;
-
-  if (dto.classScore !== undefined && dto.examScore !== undefined) {
-    const computed = this.computeGrade(dto.classScore, dto.examScore);
-    totalScore = computed.totalScore;
-    grade = computed.grade;
-  }
-
-  const entry = await this.prisma.gradeEntry.upsert({
-    where: {
-      studentId_subjectId_termId: {
-        studentId: dto.studentId,
-        subjectId: dto.subjectId,
-        termId: dto.termId,
-      },
-    },
-    create: {
-      studentId: dto.studentId,
-      subjectId: dto.subjectId,
-      termId: dto.termId,
-      classScore: dto.classScore,
-      examScore: dto.examScore,
-      totalScore,
-      grade,
-      remark: dto.remark,
-      hasObservation: dto.hasObservation ?? false,
-      observationText: dto.observationText,
-      submittedById,
-      submittedAt: new Date(),
-      isApproved: false,
-    },
-    update: {
-      classScore: dto.classScore,
-      examScore: dto.examScore,
-      totalScore,
-      grade,
-      remark: dto.remark,
-      hasObservation: dto.hasObservation,
-      observationText: dto.observationText,
-      submittedById,
-      submittedAt: new Date(),
-      isApproved: false,
-    },
-    include: { student: true, subject: true },
-  });
-
-    // Log after successful upsert
-   await this.prisma.auditLog.create({
-    data: {
-      userId: submittedById,
-      action: AuditAction.UPDATE,
-      entity: 'GradeEntry',
-      entityId: entry.id,
-      payload: {
+      create: {
         studentId: dto.studentId,
         subjectId: dto.subjectId,
         termId: dto.termId,
         classScore: dto.classScore,
         examScore: dto.examScore,
-        totalScore: entry.totalScore,
-        grade: entry.grade,
+        totalScore,
+        grade,
+        remark: dto.remark,
+        hasObservation: dto.hasObservation ?? false,
+        observationText: dto.observationText,
+        submittedById,
+        submittedAt: new Date(),
+        isApproved: false,
       },
-    },
-  });
-  return entry;
-}
+      update: {
+        classScore: dto.classScore,
+        examScore: dto.examScore,
+        totalScore,
+        grade,
+        remark: dto.remark,
+        hasObservation: dto.hasObservation,
+        observationText: dto.observationText,
+        submittedById,
+        submittedAt: new Date(),
+        isApproved: false,
+      },
+      include: { student: true, subject: true },
+    });
 
-/**
- * HOD approves a grade entry — enforces department scope.
- */
-async approveGrade(gradeEntryId: string, approvedById: string, userRole: Role) {
-  if (
-    userRole !== Role.HOD &&
-    userRole !== Role.HEADMASTER &&
-    userRole !== Role.SUPER_ADMIN &&
-    userRole !== Role.TEACHER
-  ) {
-    throw new ForbiddenException('Only HODs or above can approve grade entries');
+    // Log after successful upsert
+    await this.prisma.auditLog.create({
+      data: {
+        userId: submittedById,
+        action: AuditAction.UPDATE,
+        entity: 'GradeEntry',
+        entityId: entry.id,
+        payload: {
+          studentId: dto.studentId,
+          subjectId: dto.subjectId,
+          termId: dto.termId,
+          classScore: dto.classScore,
+          examScore: dto.examScore,
+          totalScore: entry.totalScore,
+          grade: entry.grade,
+        },
+      },
+    });
+    return entry;
   }
 
-  // HOD scope check: subject must be in their department
-  if (userRole === Role.HOD) {
-    const approver = await this.prisma.user.findUniqueOrThrow({
-      where: { id: approvedById },
-      include: { staffProfile: true },
-    });
-
-    const entry = await this.prisma.gradeEntry.findUniqueOrThrow({
-      where: { id: gradeEntryId },
-      include: { subject: { select: { departmentId: true } } },
-    });
-
-    if (entry.subject.departmentId !== approver.staffProfile?.departmentId) {
+  /**
+   * HOD approves a grade entry — enforces department scope.
+   */
+  async approveGrade(
+    gradeEntryId: string,
+    approvedById: string,
+    userRole: Role,
+  ) {
+    if (
+      userRole !== Role.HOD &&
+      userRole !== Role.HEADMASTER &&
+      userRole !== Role.SUPER_ADMIN &&
+      userRole !== Role.TEACHER
+    ) {
       throw new ForbiddenException(
-        'This subject does not belong to your department.',
+        'Only HODs or above can approve grade entries',
       );
     }
-  }
 
-  const updated = await this.prisma.gradeEntry.update({
+    // HOD scope check: subject must be in their department
+    if (userRole === Role.HOD) {
+      const approver = await this.prisma.user.findUniqueOrThrow({
+        where: { id: approvedById },
+        include: { staffProfile: true },
+      });
+
+      const entry = await this.prisma.gradeEntry.findUniqueOrThrow({
+        where: { id: gradeEntryId },
+        include: { subject: { select: { departmentId: true } } },
+      });
+
+      if (entry.subject.departmentId !== approver.staffProfile?.departmentId) {
+        throw new ForbiddenException(
+          'This subject does not belong to your department.',
+        );
+      }
+    }
+
+    const updated = await this.prisma.gradeEntry.update({
       where: { id: gradeEntryId },
       data: { isApproved: true, approvedById, approvedAt: new Date() },
     });
 
     await this.prisma.auditLog.create({
-    data: {
-      userId: approvedById,
-      action: AuditAction.UPDATE,
-      entity: 'GradeEntry',
-      entityId: gradeEntryId,
-      payload: { approved: true },
-    },
-  });
+      data: {
+        userId: approvedById,
+        action: AuditAction.UPDATE,
+        entity: 'GradeEntry',
+        entityId: gradeEntryId,
+        payload: { approved: true },
+      },
+    });
 
     return updated;
   }
 
-/**
- * Bulk approve — HOD can only approve entries for their department's subjects.
- */
-async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
-  if (
-    userRole !== Role.HOD &&
-    userRole !== Role.HEADMASTER &&
-    userRole !== Role.SUPER_ADMIN
-  ) {
-    throw new ForbiddenException('Only HODs or above can approve grade entries');
-  }
-
-  // Filter to department scope if HOD
-  let allowedIds = ids;
-  if (userRole === Role.HOD) {
-    const approver = await this.prisma.user.findUniqueOrThrow({
-      where: { id: approvedById },
-      include: { staffProfile: true },
-    });
-
-    const entries = await this.prisma.gradeEntry.findMany({
-      where: { id: { in: ids } },
-      include: { subject: { select: { departmentId: true } } },
-    });
-
-    allowedIds = entries
-      .filter(e => e.subject.departmentId === approver.staffProfile?.departmentId)
-      .map(e => e.id);
-
-    if (allowedIds.length === 0) {
+  /**
+   * Bulk approve — HOD can only approve entries for their department's subjects.
+   */
+  async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
+    if (
+      userRole !== Role.HOD &&
+      userRole !== Role.HEADMASTER &&
+      userRole !== Role.SUPER_ADMIN
+    ) {
       throw new ForbiddenException(
-        'None of the selected grades belong to your department.',
+        'Only HODs or above can approve grade entries',
       );
     }
+
+    // Filter to department scope if HOD
+    let allowedIds = ids;
+    if (userRole === Role.HOD) {
+      const approver = await this.prisma.user.findUniqueOrThrow({
+        where: { id: approvedById },
+        include: { staffProfile: true },
+      });
+
+      const entries = await this.prisma.gradeEntry.findMany({
+        where: { id: { in: ids } },
+        include: { subject: { select: { departmentId: true } } },
+      });
+
+      allowedIds = entries
+        .filter(
+          (e) => e.subject.departmentId === approver.staffProfile?.departmentId,
+        )
+        .map((e) => e.id);
+
+      if (allowedIds.length === 0) {
+        throw new ForbiddenException(
+          'None of the selected grades belong to your department.',
+        );
+      }
+    }
+
+    return this.prisma.gradeEntry.updateMany({
+      where: { id: { in: allowedIds } },
+      data: { isApproved: true, approvedById, approvedAt: new Date() },
+    });
   }
 
-  return this.prisma.gradeEntry.updateMany({
-    where: { id: { in: allowedIds } },
-    data: { isApproved: true, approvedById, approvedAt: new Date() },
-  });
-}
-
-  
   /**
    * Get class performance summary for a term (HOD view)
    */
@@ -421,20 +439,20 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
       throw new ForbiddenException('Only HODs or above can lock grade entries');
     }
 
-   const updated = await this.prisma.gradeEntry.update({
+    const updated = await this.prisma.gradeEntry.update({
       where: { id: gradeEntryId },
       data: { isLocked: true, lockedById, lockedAt: new Date() },
     });
 
     await this.prisma.auditLog.create({
-    data: {
-      userId: lockedById,
-      action: AuditAction.LOCK,
-      entity: 'GradeEntry',
-      entityId: gradeEntryId,
-      payload: { locked: true },
-    },
-  });
+      data: {
+        userId: lockedById,
+        action: AuditAction.LOCK,
+        entity: 'GradeEntry',
+        entityId: gradeEntryId,
+        payload: { locked: true },
+      },
+    });
 
     return updated;
   }
@@ -442,14 +460,16 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
   /**
    * Record a grade correction with reason (audit trail)
    */
-    async correctGrade(dto: CorrectGradeDto, changedById: string) {
+  async correctGrade(dto: CorrectGradeDto, changedById: string) {
     const entry = await this.prisma.gradeEntry.findUniqueOrThrow({
       where: { id: dto.gradeEntryId },
     });
 
     if (entry.isLocked) throw new ForbiddenException('Grade is locked.');
 
-    const oldValue = String(entry[dto.fieldChanged as keyof typeof entry] ?? '');
+    const oldValue = String(
+      entry[dto.fieldChanged as keyof typeof entry] ?? '',
+    );
 
     await this.prisma.gradeCorrection.create({
       data: {
@@ -463,12 +483,19 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
     });
 
     const updateData: Record<string, any> = {
-      [dto.fieldChanged]: dto.fieldChanged === 'remark' ? dto.newValue : parseFloat(dto.newValue),
+      [dto.fieldChanged]:
+        dto.fieldChanged === 'remark' ? dto.newValue : parseFloat(dto.newValue),
     };
 
     if (dto.fieldChanged === 'classScore' || dto.fieldChanged === 'examScore') {
-      const cs = dto.fieldChanged === 'classScore' ? parseFloat(dto.newValue) : (entry.classScore ?? 0);
-      const es = dto.fieldChanged === 'examScore' ? parseFloat(dto.newValue) : (entry.examScore ?? 0);
+      const cs =
+        dto.fieldChanged === 'classScore'
+          ? parseFloat(dto.newValue)
+          : (entry.classScore ?? 0);
+      const es =
+        dto.fieldChanged === 'examScore'
+          ? parseFloat(dto.newValue)
+          : (entry.examScore ?? 0);
       const computed = this.computeGrade(cs, es);
       updateData.totalScore = computed.totalScore;
       updateData.grade = computed.grade;
@@ -479,20 +506,20 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
       data: updateData,
     });
 
-   await this.prisma.auditLog.create({
-    data: {
-      userId: changedById,
-      action: AuditAction.GRADE_CORRECTION,
-      entity: 'GradeEntry',
-      entityId: dto.gradeEntryId,
-      payload: {
-        fieldChanged: dto.fieldChanged,
-        oldValue,
-        newValue: dto.newValue,
-        reason: dto.reason,
+    await this.prisma.auditLog.create({
+      data: {
+        userId: changedById,
+        action: AuditAction.GRADE_CORRECTION,
+        entity: 'GradeEntry',
+        entityId: dto.gradeEntryId,
+        payload: {
+          fieldChanged: dto.fieldChanged,
+          oldValue,
+          newValue: dto.newValue,
+          reason: dto.reason,
+        },
       },
-    },
-  });
+    });
 
     return corrected;
   }
@@ -612,20 +639,20 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
       );
     }
 
-     const updated = await this.prisma.gradeEntry.update({
+    const updated = await this.prisma.gradeEntry.update({
       where: { id: gradeEntryId },
       data: { isLocked: false, lockedById: null, lockedAt: null },
     });
 
-   await this.prisma.auditLog.create({
-    data: {
-      userId: unlockedById,
-      action: AuditAction.UNLOCK,
-      entity: 'GradeEntry',
-      entityId: gradeEntryId,
-      payload: { locked: false },
-    },
-  });
+    await this.prisma.auditLog.create({
+      data: {
+        userId: unlockedById,
+        action: AuditAction.UNLOCK,
+        entity: 'GradeEntry',
+        entityId: gradeEntryId,
+        payload: { locked: false },
+      },
+    });
 
     return updated;
   }
@@ -731,146 +758,168 @@ async bulkApproveGrades(ids: string[], approvedById: string, userRole: Role) {
   }
 
   /**
- * Filtered subject performance breakdown — supports filtering by
- * class section, department, and subject type (Core/Elective).
- */
-async getSubjectPerformanceFiltered(filters: {
-  classId?: string;
-  departmentId?: string;
-  subjectType?: 'CORE' | 'ELECTIVE';
-}) {
-  const gradeWhere: any = {};
+   * Filtered subject performance breakdown — supports filtering by
+   * class section, department, and subject type (Core/Elective).
+   */
+  async getSubjectPerformanceFiltered(filters: {
+    classId?: string;
+    departmentId?: string;
+    subjectType?: 'CORE' | 'ELECTIVE';
+  }) {
+    const gradeWhere: any = {};
 
-  if (filters.classId) {
-    gradeWhere.student = { currentClassId: filters.classId };
-  }
-
-  const subjectWhere: any = {};
-  if (filters.departmentId) subjectWhere.departmentId = filters.departmentId;
-  if (filters.subjectType) subjectWhere.type = filters.subjectType;
-
-  if (Object.keys(subjectWhere).length > 0) {
-    gradeWhere.subject = subjectWhere;
-  }
-
-  const grades = await this.prisma.gradeEntry.findMany({
-    where: { ...gradeWhere, totalScore: { not: null } },
-    include: {
-      subject: { select: { id: true, name: true, code: true, type: true, departmentId: true, department: { select: { name: true } } } },
-    },
-  });
-
-  const bySubject = new Map<string, { name: string; code: string; type: string; departmentName: string | null; scores: number[] }>();
-
-  grades.forEach((g) => {
-    const key = g.subjectId;
-    if (!bySubject.has(key)) {
-      bySubject.set(key, {
-        name: g.subject.name,
-        code: g.subject.code,
-        type: g.subject.type,
-        departmentName: g.subject.department?.name ?? null,
-        scores: [],
-      });
+    if (filters.classId) {
+      gradeWhere.student = { currentClassId: filters.classId };
     }
-    bySubject.get(key)!.scores.push(g.totalScore!);
-  });
 
-  const result = Array.from(bySubject.entries()).map(([subjectId, data]) => ({
-    subjectId,
-    subjectName: data.name,
-    subjectCode: data.code,
-    type: data.type,
-    departmentName: data.departmentName,
-    averageScore: (data.scores.reduce((a, b) => a + b, 0) / data.scores.length).toFixed(2),
-    studentCount: data.scores.length,
-  }));
+    const subjectWhere: any = {};
+    if (filters.departmentId) subjectWhere.departmentId = filters.departmentId;
+    if (filters.subjectType) subjectWhere.type = filters.subjectType;
 
-  result.sort((a, b) => parseFloat(b.averageScore) - parseFloat(a.averageScore));
+    if (Object.keys(subjectWhere).length > 0) {
+      gradeWhere.subject = subjectWhere;
+    }
 
-  const coreScores = result.filter(r => r.type === 'CORE');
-  const electiveScores = result.filter(r => r.type === 'ELECTIVE');
-
-  const avgOf = (arr: typeof result) =>
-    arr.length > 0
-      ? (arr.reduce((sum, r) => sum + parseFloat(r.averageScore), 0) / arr.length).toFixed(2)
-      : null;
-
-  return {
-    subjects: result,
-    summary: {
-      coreAverage: avgOf(coreScores),
-      electiveAverage: avgOf(electiveScores),
-      coreSubjectCount: coreScores.length,
-      electiveSubjectCount: electiveScores.length,
-    },
-  };
-}
-
-/**
- * Get performance analytics for a teacher's assigned subjects.
- * Returns per-subject averages, top students, and at-risk students (below 50%).
- */
-async getTeacherAnalytics(staffProfileId: string, termId: string) {
-  const assignments = await this.prisma.teachingAssignment.findMany({
-    where: { teacherId: staffProfileId },
-    include: {
-      subject: true,
-      classSection: true,
-    },
-  });
-
-  const results = await Promise.all(
-    assignments.map(async (assignment) => {
-      const grades = await this.prisma.gradeEntry.findMany({
-        where: {
-          subjectId: assignment.subjectId,
-          termId,
-          student: { currentClassId: assignment.classSectionId },
-          totalScore: { not: null },
-        },
-        include: {
-          student: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              indexNumber: true,
-            },
+    const grades = await this.prisma.gradeEntry.findMany({
+      where: { ...gradeWhere, totalScore: { not: null } },
+      include: {
+        subject: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            type: true,
+            departmentId: true,
+            department: { select: { name: true } },
           },
         },
-        orderBy: { totalScore: 'desc' },
-      });
+      },
+    });
 
-      if (grades.length === 0) {
-        return {
-          assignmentId: assignment.id,
-          subject: { id: assignment.subject.id, name: assignment.subject.name, code: assignment.subject.code, type: assignment.subject.type },
-          classSection: { id: assignment.classSection.id, name: assignment.classSection.name, level: assignment.classSection.level },
-          averageScore: null,
-          studentCount: 0,
-          topStudents: [],
-          atRiskStudents: [],
-          gradeDistribution: {},
-        };
+    const bySubject = new Map<
+      string,
+      {
+        name: string;
+        code: string;
+        type: string;
+        departmentName: string | null;
+        scores: number[];
       }
+    >();
 
-      const scores = grades.map(g => g.totalScore!);
-      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+    grades.forEach((g) => {
+      const key = g.subjectId;
+      if (!bySubject.has(key)) {
+        bySubject.set(key, {
+          name: g.subject.name,
+          code: g.subject.code,
+          type: g.subject.type,
+          departmentName: g.subject.department?.name ?? null,
+          scores: [],
+        });
+      }
+      bySubject.get(key)!.scores.push(g.totalScore!);
+    });
 
-      const topStudents = grades.slice(0, 5).map(g => ({
-        id: g.student.id,
-        name: `${g.student.firstName} ${g.student.lastName}`,
-        indexNumber: g.student.indexNumber,
-        score: g.totalScore!,
-        grade: g.grade,
-      }));
+    const result = Array.from(bySubject.entries()).map(([subjectId, data]) => ({
+      subjectId,
+      subjectName: data.name,
+      subjectCode: data.code,
+      type: data.type,
+      departmentName: data.departmentName,
+      averageScore: (
+        data.scores.reduce((a, b) => a + b, 0) / data.scores.length
+      ).toFixed(2),
+      studentCount: data.scores.length,
+    }));
 
-      const atRiskStudents = grades
-        .filter(g => g.totalScore! < 50)
-        .slice(-10)
-        .reverse()
-        .map(g => ({
+    result.sort(
+      (a, b) => parseFloat(b.averageScore) - parseFloat(a.averageScore),
+    );
+
+    const coreScores = result.filter((r) => r.type === 'CORE');
+    const electiveScores = result.filter((r) => r.type === 'ELECTIVE');
+
+    const avgOf = (arr: typeof result) =>
+      arr.length > 0
+        ? (
+            arr.reduce((sum, r) => sum + parseFloat(r.averageScore), 0) /
+            arr.length
+          ).toFixed(2)
+        : null;
+
+    return {
+      subjects: result,
+      summary: {
+        coreAverage: avgOf(coreScores),
+        electiveAverage: avgOf(electiveScores),
+        coreSubjectCount: coreScores.length,
+        electiveSubjectCount: electiveScores.length,
+      },
+    };
+  }
+
+  /**
+   * Get performance analytics for a teacher's assigned subjects.
+   * Returns per-subject averages, top students, and at-risk students (below 50%).
+   */
+  async getTeacherAnalytics(staffProfileId: string, termId: string) {
+    const assignments = await this.prisma.teachingAssignment.findMany({
+      where: { teacherId: staffProfileId },
+      include: {
+        subject: true,
+        classSection: true,
+      },
+    });
+
+    const results = await Promise.all(
+      assignments.map(async (assignment) => {
+        const grades = await this.prisma.gradeEntry.findMany({
+          where: {
+            subjectId: assignment.subjectId,
+            termId,
+            student: { currentClassId: assignment.classSectionId },
+            totalScore: { not: null },
+          },
+          include: {
+            student: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                indexNumber: true,
+              },
+            },
+          },
+          orderBy: { totalScore: 'desc' },
+        });
+
+        if (grades.length === 0) {
+          return {
+            assignmentId: assignment.id,
+            subject: {
+              id: assignment.subject.id,
+              name: assignment.subject.name,
+              code: assignment.subject.code,
+              type: assignment.subject.type,
+            },
+            classSection: {
+              id: assignment.classSection.id,
+              name: assignment.classSection.name,
+              level: assignment.classSection.level,
+            },
+            averageScore: null,
+            studentCount: 0,
+            topStudents: [],
+            atRiskStudents: [],
+            gradeDistribution: {},
+          };
+        }
+
+        const scores = grades.map((g) => g.totalScore!);
+        const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+
+        const topStudents = grades.slice(0, 5).map((g) => ({
           id: g.student.id,
           name: `${g.student.firstName} ${g.student.lastName}`,
           indexNumber: g.student.indexNumber,
@@ -878,120 +927,158 @@ async getTeacherAnalytics(staffProfileId: string, termId: string) {
           grade: g.grade,
         }));
 
-      // Grade distribution
-      const dist: Record<string, number> = { A1: 0, B2: 0, B3: 0, C4: 0, C5: 0, C6: 0, D7: 0, E8: 0, F9: 0 };
-      grades.forEach(g => { if (g.grade && dist[g.grade] !== undefined) dist[g.grade]++; });
+        const atRiskStudents = grades
+          .filter((g) => g.totalScore! < 50)
+          .slice(-10)
+          .reverse()
+          .map((g) => ({
+            id: g.student.id,
+            name: `${g.student.firstName} ${g.student.lastName}`,
+            indexNumber: g.student.indexNumber,
+            score: g.totalScore!,
+            grade: g.grade,
+          }));
 
-      return {
-        assignmentId: assignment.id,
-        subject: { id: assignment.subject.id, name: assignment.subject.name, code: assignment.subject.code, type: assignment.subject.type },
-        classSection: { id: assignment.classSection.id, name: assignment.classSection.name, level: assignment.classSection.level },
-        averageScore: parseFloat(avg.toFixed(2)),
-        studentCount: grades.length,
-        topStudents,
-        atRiskStudents,
-        gradeDistribution: dist,
-      };
-    }),
-  );
+        // Grade distribution
+        const dist: Record<string, number> = {
+          A1: 0,
+          B2: 0,
+          B3: 0,
+          C4: 0,
+          C5: 0,
+          C6: 0,
+          D7: 0,
+          E8: 0,
+          F9: 0,
+        };
+        grades.forEach((g) => {
+          if (g.grade && dist[g.grade] !== undefined) dist[g.grade]++;
+        });
 
-  return results;
-}
-
-/**
- * Get HOD analytics: per-subject performance across their department,
- * with teachers for each subject, top students, and at-risk students.
- */
-async getHODAnalytics(departmentId: string, termId: string) {
-  const subjects = await this.prisma.subject.findMany({
-    where: { departmentId },
-    include: {
-      teachingAssignments: {
-        include: {
-          teacher: {
-            select: { id: true, firstName: true, lastName: true, staffId: true },
+        return {
+          assignmentId: assignment.id,
+          subject: {
+            id: assignment.subject.id,
+            name: assignment.subject.name,
+            code: assignment.subject.code,
+            type: assignment.subject.type,
           },
-          classSection: { select: { id: true, name: true, level: true } },
+          classSection: {
+            id: assignment.classSection.id,
+            name: assignment.classSection.name,
+            level: assignment.classSection.level,
+          },
+          averageScore: parseFloat(avg.toFixed(2)),
+          studentCount: grades.length,
+          topStudents,
+          atRiskStudents,
+          gradeDistribution: dist,
+        };
+      }),
+    );
+
+    return results;
+  }
+
+  /**
+   * Get HOD analytics: per-subject performance across their department,
+   * with teachers for each subject, top students, and at-risk students.
+   */
+  async getHODAnalytics(departmentId: string, termId: string) {
+    const subjects = await this.prisma.subject.findMany({
+      where: { departmentId },
+      include: {
+        teachingAssignments: {
+          include: {
+            teacher: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                staffId: true,
+              },
+            },
+            classSection: { select: { id: true, name: true, level: true } },
+          },
         },
       },
-    },
-    orderBy: { name: 'asc' },
-  });
+      orderBy: { name: 'asc' },
+    });
 
-  const results = await Promise.all(
-    subjects.map(async (subject) => {
-      const grades = await this.prisma.gradeEntry.findMany({
-        where: {
-          subjectId: subject.id,
-          termId,
-          totalScore: { not: null },
-        },
-        include: {
-          student: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              indexNumber: true,
-              currentClass: { select: { name: true, level: true } },
+    const results = await Promise.all(
+      subjects.map(async (subject) => {
+        const grades = await this.prisma.gradeEntry.findMany({
+          where: {
+            subjectId: subject.id,
+            termId,
+            totalScore: { not: null },
+          },
+          include: {
+            student: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                indexNumber: true,
+                currentClass: { select: { name: true, level: true } },
+              },
             },
           },
-        },
-        orderBy: { totalScore: 'desc' },
-      });
+          orderBy: { totalScore: 'desc' },
+        });
 
-      if (grades.length === 0) {
+        if (grades.length === 0) {
+          return {
+            subjectId: subject.id,
+            subjectName: subject.name,
+            subjectCode: subject.code,
+            subjectType: subject.type,
+            teachers: subject.teachingAssignments.map((a) => ({
+              id: a.teacher.id,
+              name: `${a.teacher.firstName} ${a.teacher.lastName}`,
+              staffId: a.teacher.staffId,
+              classSection: a.classSection,
+            })),
+            averageScore: null,
+            studentCount: 0,
+            topStudents: [],
+            atRiskStudents: [],
+            gradeDistribution: {},
+          };
+        }
+
+        const scores = grades.map((g) => g.totalScore!);
+        const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+
+        const dist: Record<string, number> = {
+          A1: 0,
+          B2: 0,
+          B3: 0,
+          C4: 0,
+          C5: 0,
+          C6: 0,
+          D7: 0,
+          E8: 0,
+          F9: 0,
+        };
+        grades.forEach((g) => {
+          if (g.grade && dist[g.grade] !== undefined) dist[g.grade]++;
+        });
+
         return {
           subjectId: subject.id,
           subjectName: subject.name,
           subjectCode: subject.code,
           subjectType: subject.type,
-          teachers: subject.teachingAssignments.map(a => ({
+          teachers: subject.teachingAssignments.map((a) => ({
             id: a.teacher.id,
             name: `${a.teacher.firstName} ${a.teacher.lastName}`,
             staffId: a.teacher.staffId,
             classSection: a.classSection,
           })),
-          averageScore: null,
-          studentCount: 0,
-          topStudents: [],
-          atRiskStudents: [],
-          gradeDistribution: {},
-        };
-      }
-
-      const scores = grades.map(g => g.totalScore!);
-      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
-
-      const dist: Record<string, number> = { A1: 0, B2: 0, B3: 0, C4: 0, C5: 0, C6: 0, D7: 0, E8: 0, F9: 0 };
-      grades.forEach(g => { if (g.grade && dist[g.grade] !== undefined) dist[g.grade]++; });
-
-      return {
-        subjectId: subject.id,
-        subjectName: subject.name,
-        subjectCode: subject.code,
-        subjectType: subject.type,
-        teachers: subject.teachingAssignments.map(a => ({
-          id: a.teacher.id,
-          name: `${a.teacher.firstName} ${a.teacher.lastName}`,
-          staffId: a.teacher.staffId,
-          classSection: a.classSection,
-        })),
-        averageScore: parseFloat(avg.toFixed(2)),
-        studentCount: grades.length,
-        topStudents: grades.slice(0, 5).map(g => ({
-          id: g.student.id,
-          name: `${g.student.firstName} ${g.student.lastName}`,
-          indexNumber: g.student.indexNumber,
-          score: g.totalScore!,
-          grade: g.grade,
-          class: g.student.currentClass,
-        })),
-        atRiskStudents: grades
-          .filter(g => g.totalScore! < 50)
-          .slice(-10)
-          .reverse()
-          .map(g => ({
+          averageScore: parseFloat(avg.toFixed(2)),
+          studentCount: grades.length,
+          topStudents: grades.slice(0, 5).map((g) => ({
             id: g.student.id,
             name: `${g.student.firstName} ${g.student.lastName}`,
             indexNumber: g.student.indexNumber,
@@ -999,11 +1086,23 @@ async getHODAnalytics(departmentId: string, termId: string) {
             grade: g.grade,
             class: g.student.currentClass,
           })),
-        gradeDistribution: dist,
-      };
-    }),
-  );
+          atRiskStudents: grades
+            .filter((g) => g.totalScore! < 50)
+            .slice(-10)
+            .reverse()
+            .map((g) => ({
+              id: g.student.id,
+              name: `${g.student.firstName} ${g.student.lastName}`,
+              indexNumber: g.student.indexNumber,
+              score: g.totalScore!,
+              grade: g.grade,
+              class: g.student.currentClass,
+            })),
+          gradeDistribution: dist,
+        };
+      }),
+    );
 
-  return results;
-}
+    return results;
+  }
 }
