@@ -77,7 +77,7 @@ export class CommsController {
   }
 
   @Get('staff-notifications/:staffId')
-  @ApiOperation({ summary: "Get staff member's notification inbox" })
+  @Roles(Role.TEACHER, Role.HOD, Role.HEADMASTER, Role.SUPER_ADMIN) // ← add HOD
   getStaffNotifications(
     @Param('staffId') staffId: string,
     @Query('unreadOnly') unreadOnly: boolean,

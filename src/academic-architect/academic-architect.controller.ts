@@ -195,14 +195,14 @@ unlockTerm(
 }
 
 @Get('departments/overview')
-@Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
+@Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
 @ApiOperation({ summary: 'Get all departments with staff/subject counts' })
 getDepartmentsOverview() {
   return this.service.getDepartmentsOverview();
 }
 
 @Get('departments/:id/roster')
-@Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
+@Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
 @ApiOperation({ summary: 'Get a department with its HODs, teachers, and subjects' })
 getDepartmentRoster(@Param('id') id: string) {
   return this.service.getDepartmentRoster(id);

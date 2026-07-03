@@ -146,7 +146,7 @@ export class GradingController {
 
   //top performing student
   @Get('top-students/:departmentId')
-  @Roles(Role.HOD, Role.HEADMASTER, Role.SUPER_ADMIN)
+  @Roles(Role.HOD, Role.HEADMASTER, Role.SUPER_ADMIN, Role.HOD)
   @ApiOperation({ summary: 'Get top performing students in a department' })
   getTopStudents(
     @Param('departmentId') departmentId: string,
