@@ -21,6 +21,7 @@ import {
 @ApiBearerAuth()
 @Controller('grading')
 export class GradingController {
+  service: any;
   constructor(private gradingService: GradingService) {}
 
   @Post('entries')
@@ -173,37 +174,53 @@ export class GradingController {
     );
   }
 
+  @Get('my-grading-scope')
+  @ApiOperation({
+    summary: 'Get subjects and classes this user is allowed to grade',
+  })
+  getMyGradingScope(@CurrentUser('id') userId: string) {
+    return this.service.getMyGradingScope(userId);
+  }
+
   /**
    * performance filtered analytics
-  */
- @Get('performance-filtered')
-@Roles(Role.HEADMASTER, Role.SUPER_ADMIN, Role.HOD)
-@ApiOperation({ summary: 'Get subject performance filtered by class, department, and type' })
-getPerformanceFiltered(
-  @Query('classId') classId?: string,
-  @Query('departmentId') departmentId?: string,
-  @Query('subjectType') subjectType?: 'CORE' | 'ELECTIVE',
-) {
-  return this.gradingService.getSubjectPerformanceFiltered({ classId, departmentId, subjectType });
-}
+   */
+  @Get('performance-filtered')
+  @Roles(Role.HEADMASTER, Role.SUPER_ADMIN, Role.HOD)
+  @ApiOperation({
+    summary: 'Get subject performance filtered by class, department, and type',
+  })
+  getPerformanceFiltered(
+    @Query('classId') classId?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('subjectType') subjectType?: 'CORE' | 'ELECTIVE',
+  ) {
+    return this.gradingService.getSubjectPerformanceFiltered({
+      classId,
+      departmentId,
+      subjectType,
+    });
+  }
 
-@Get('analytics/teacher/:staffProfileId')
-@Roles(Role.TEACHER, Role.HOD, Role.HEADMASTER, Role.SUPER_ADMIN)
-@ApiOperation({ summary: 'Get performance analytics for a teacher\'s subjects' })
-getTeacherAnalytics(
-  @Param('staffProfileId') staffProfileId: string,
-  @Query('termId') termId: string,
-) {
-  return this.gradingService.getTeacherAnalytics(staffProfileId, termId);
-}
+  @Get('analytics/teacher/:staffProfileId')
+  @Roles(Role.TEACHER, Role.HOD, Role.HEADMASTER, Role.SUPER_ADMIN)
+  @ApiOperation({
+    summary: "Get performance analytics for a teacher's subjects",
+  })
+  getTeacherAnalytics(
+    @Param('staffProfileId') staffProfileId: string,
+    @Query('termId') termId: string,
+  ) {
+    return this.gradingService.getTeacherAnalytics(staffProfileId, termId);
+  }
 
-@Get('analytics/department/:departmentId')
-@Roles(Role.HOD, Role.HEADMASTER, Role.SUPER_ADMIN)
-@ApiOperation({ summary: 'Get HOD analytics for department subjects' })
-getHODAnalytics(
-  @Param('departmentId') departmentId: string,
-  @Query('termId') termId: string,
-) {
-  return this.gradingService.getHODAnalytics(departmentId, termId);
-}
+  @Get('analytics/department/:departmentId')
+  @Roles(Role.HOD, Role.HEADMASTER, Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get HOD analytics for department subjects' })
+  getHODAnalytics(
+    @Param('departmentId') departmentId: string,
+    @Query('termId') termId: string,
+  ) {
+    return this.gradingService.getHODAnalytics(departmentId, termId);
+  }
 }
