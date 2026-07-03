@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { UsersService, CreateParentDto } from './users.service';
@@ -15,15 +24,18 @@ export class UsersController {
   @Post('staff')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
   @ApiOperation({ summary: 'Create a staff account' })
- createStaff(@Body() dto: CreateStaffDto, @CurrentUser('id') userId: string) {
-  return this.usersService.createStaff(dto, userId);
+  createStaff(@Body() dto: CreateStaffDto, @CurrentUser('id') userId: string) {
+    return this.usersService.createStaff(dto, userId);
   }
 
   @Post('students')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.TEACHER, Role.STUDENT)
   @ApiOperation({ summary: 'Enrol a new student' })
-  createStudent(@Body() dto: CreateStudentDto, @CurrentUser('id') userId: string) {
-  return this.usersService.createStudent(dto, userId);
+  createStudent(
+    @Body() dto: CreateStudentDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.usersService.createStudent(dto, userId);
   }
 
   @Post('parents')
@@ -35,9 +47,11 @@ export class UsersController {
 
   @Get('students')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD, Role.TEACHER)
-  @ApiOperation({ summary: 'List all active students' })
-  getAllStudents(@CurrentUser() user: { id: string, role: Role }) {
-    return this.usersService.getAllStudents(user);
+  getAllStudents(
+    @CurrentUser() user: { id: string; role: Role },
+    @Query('classId') classId?: string,
+  ) {
+    return this.usersService.getAllStudents(user, classId);
   }
 
   @Get('students/:id')
@@ -49,43 +63,43 @@ export class UsersController {
   @Get('staff')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD, Role.TEACHER)
   @ApiOperation({ summary: 'List all staff members' })
-  getAllStaff(@CurrentUser() user: { id: string, role: Role }) {
+  getAllStaff(@CurrentUser() user: { id: string; role: Role }) {
     return this.usersService.getAllStaff(user);
   }
 
   @Delete(':id/deactivate')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
   @ApiOperation({ summary: 'Deactivate a user account' })
- deactivate(@Param('id') id: string, @CurrentUser('id') userId: string) {
-  return this.usersService.deactivateUser(id, userId);
+  deactivate(@Param('id') id: string, @CurrentUser('id') userId: string) {
+    return this.usersService.deactivateUser(id, userId);
   }
 
   //csv
   @Post('students/bulk-import')
-@Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
-@ApiOperation({ summary: 'Bulk import students from parsed CSV rows' })
-bulkImportStudents(@Body('rows') rows: CreateStudentDto[]) {
-  return this.usersService.bulkCreateStudents(rows);
-}
+  @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
+  @ApiOperation({ summary: 'Bulk import students from parsed CSV rows' })
+  bulkImportStudents(@Body('rows') rows: CreateStudentDto[]) {
+    return this.usersService.bulkCreateStudents(rows);
+  }
 
-@Post('staff/bulk-import')
-@Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
-@ApiOperation({ summary: 'Bulk import staff from parsed CSV rows' })
-bulkImportStaff(@Body('rows') rows: CreateStaffDto[]) {
-  return this.usersService.bulkCreateStaff(rows);
-}
+  @Post('staff/bulk-import')
+  @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
+  @ApiOperation({ summary: 'Bulk import staff from parsed CSV rows' })
+  bulkImportStaff(@Body('rows') rows: CreateStaffDto[]) {
+    return this.usersService.bulkCreateStaff(rows);
+  }
 
-@Get('students/export')
-@Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
-@ApiOperation({ summary: 'Export students as CSV-ready JSON' })
-exportStudents(@CurrentUser() user: { id: string; role: Role }) {
-  return this.usersService.exportStudentsCSV(user);
-}
+  @Get('students/export')
+  @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
+  @ApiOperation({ summary: 'Export students as CSV-ready JSON' })
+  exportStudents(@CurrentUser() user: { id: string; role: Role }) {
+    return this.usersService.exportStudentsCSV(user);
+  }
 
-@Get('staff/export')
-@Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
-@ApiOperation({ summary: 'Export staff as CSV-ready JSON' })
-exportStaff(@CurrentUser() user: { id: string; role: Role }) {
-  return this.usersService.exportStaffCSV(user);
-}
+  @Get('staff/export')
+  @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
+  @ApiOperation({ summary: 'Export staff as CSV-ready JSON' })
+  exportStaff(@CurrentUser() user: { id: string; role: Role }) {
+    return this.usersService.exportStaffCSV(user);
+  }
 }

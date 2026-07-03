@@ -218,75 +218,33 @@ export class UsersService {
     });
   }
 
-  async getAllStudents(user?: { id: string; role: Role }) {
-    // HOD: scope to their department
-    if (user?.role === Role.HOD) {
-      const staff = await this.prisma.staffProfile.findFirst({
-        where: { userId: user.id },
-        select: { departmentId: true },
-      });
-      const departmentId = staff?.departmentId;
+  async getAllStudents(user?: { id: string; role: Role }, classId?: string) {
 
-      return this.prisma.studentProfile.findMany({
-        where: {
-          archivedAt: null,
-          ...(departmentId
-            ? {
-                currentClass: {
-                  teachingAssignments: { some: { teacher: { departmentId } } },
-                },
-              }
-            : {}),
-        },
-        include: {
-          user: { select: { id: true, email: true, isActive: true } },
-          currentClass: true,
-          department: true,
-          reportCards: { select: { id: true } },
-          grades: { select: { id: true, totalScore: true } },
-        },
-        orderBy: { lastName: 'asc' },
-      });
+  if (user?.role === Role.TEACHER) {
+    const staff = await this.prisma.staffProfile.findFirst({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    if (!staff) return [];
+
+    const assignments = await this.prisma.teachingAssignment.findMany({
+      where: { teacherId: staff.id },
+      select: { classSectionId: true },
+    });
+    const allowedClassIds = [...new Set(assignments.map(a => a.classSectionId))];
+
+    // If classId requested, verify teacher is assigned to it
+    if (classId && !allowedClassIds.includes(classId)) {
+      return []; // Teacher has no assignment in this class — return empty
     }
 
-    // TEACHER: scope strictly to their assigned classes only
-    if (user?.role === Role.TEACHER) {
-      const staff = await this.prisma.staffProfile.findFirst({
-        where: { userId: user.id },
-        select: { id: true },
-      });
-
-      if (!staff) return [];
-
-      // Get the class IDs this teacher is assigned to
-      const assignments = await this.prisma.teachingAssignment.findMany({
-        where: { teacherId: staff.id },
-        select: { classSectionId: true },
-      });
-
-      const classIds = [...new Set(assignments.map((a) => a.classSectionId))];
-
-      if (classIds.length === 0) return [];
-
-      return this.prisma.studentProfile.findMany({
-        where: {
-          archivedAt: null,
-          currentClassId: { in: classIds },
-        },
-        include: {
-          user: { select: { id: true, email: true, isActive: true } },
-          currentClass: true,
-          department: true,
-          reportCards: { select: { id: true } },
-          grades: { select: { id: true, totalScore: true } },
-        },
-        orderBy: { lastName: 'asc' },
-      });
-    }
-
-    // ADMIN/HEADMASTER: see everyone
     return this.prisma.studentProfile.findMany({
-      where: { archivedAt: null },
+      where: {
+        archivedAt: null,
+        currentClassId: classId
+          ? classId  // specific class requested
+          : { in: allowedClassIds }, // all their classes
+      },
       include: {
         user: { select: { id: true, email: true, isActive: true } },
         currentClass: true,
@@ -297,6 +255,61 @@ export class UsersService {
       orderBy: { lastName: 'asc' },
     });
   }
+
+  if (user?.role === Role.HOD) {
+    const staff = await this.prisma.staffProfile.findFirst({
+      where: { userId: user.id },
+      select: { departmentId: true },
+    });
+
+    // HOD: show students in classes where their department teaches
+    const subjects = await this.prisma.subject.findMany({
+      where: { departmentId: staff?.departmentId ?? undefined },
+      select: { id: true },
+    });
+    const subjectIds = subjects.map(s => s.id);
+
+    const assignments = await this.prisma.teachingAssignment.findMany({
+      where: { subjectId: { in: subjectIds } },
+      select: { classSectionId: true },
+    });
+    const classIds = [...new Set(assignments.map(a => a.classSectionId))];
+
+    return this.prisma.studentProfile.findMany({
+      where: {
+        archivedAt: null,
+        currentClassId: classId
+          ? (classIds.includes(classId) ? classId : undefined)
+          : { in: classIds },
+      },
+      include: {
+        user: { select: { id: true, email: true, isActive: true } },
+        currentClass: true,
+        department: true,
+        reportCards: { select: { id: true } },
+        grades: { select: { id: true, totalScore: true } },
+      },
+      orderBy: { lastName: 'asc' },
+    });
+  }
+
+  // Admin/Headmaster — full access
+  return this.prisma.studentProfile.findMany({
+    where: {
+      archivedAt: null,
+      ...(classId ? { currentClassId: classId } : {}),
+    },
+    include: {
+      user: { select: { id: true, email: true, isActive: true } },
+      currentClass: true,
+      department: true,
+      reportCards: { select: { id: true } },
+      grades: { select: { id: true, totalScore: true } },
+    },
+    orderBy: { lastName: 'asc' },
+  });
+}
+
   async getStudentProfile(studentId: string, requesterRole?: Role) {
     return this.prisma.studentProfile.findUniqueOrThrow({
       where: { id: studentId },
