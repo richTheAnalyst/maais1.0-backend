@@ -12,8 +12,8 @@ src/
 ├── users/                   # Staff, student, parent account management
 ├── academic-architect/      # Years, terms, departments, subjects, classes
 ├── grading/                 # Grade entry, smart remarks, HOD locking, audit trail
-├── reports/                 # Report card generator, transcript builder, QR verify
-├── archive/                 # Promotion cycle, The Vault search, DB health
+├── reports/                 # Report card generator, transcript builder
+├── archive/                 # Promotion cycle, The Vault search
 ├── comms/                   # SMS/App notifications, analytics pulse
 └── common/
     ├── prisma/              # Global PrismaService

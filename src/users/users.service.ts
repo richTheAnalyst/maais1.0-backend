@@ -1,4 +1,4 @@
-import { Injectable, ConflictException } from '@nestjs/common';
+import { Injectable, ConflictException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { Role, Gender, AuditAction } from '@prisma/client';
 import * as argon2 from 'argon2';
@@ -217,6 +217,154 @@ export class UsersService {
       include: { parentProfile: true },
     });
   }
+
+  //update staffs and students function
+  async updateStaffProfile(
+  staffProfileId: string,
+  dto: {
+    firstName?: string;
+    lastName?: string;
+    middleName?: string;
+    phone?: string;
+    email?: string;
+    password?: string;
+  },
+  requesterId: string,
+  requesterRole: Role,
+) {
+  // Find the staff profile + linked user
+  const staff = await this.prisma.staffProfile.findUniqueOrThrow({
+    where: { id: staffProfileId },
+    include: { user: true },
+  });
+
+  // HOD can only edit staff in their own department
+  if (requesterRole === Role.HOD) {
+    const requester = await this.prisma.staffProfile.findFirst({
+      where: { userId: requesterId },
+      select: { departmentId: true },
+    });
+    if (staff.departmentId !== requester?.departmentId && staff.userId !== requesterId) {
+      throw new ForbiddenException('You can only edit staff in your department.');
+    }
+  }
+
+  // Teacher can only edit themselves
+  if (requesterRole === Role.TEACHER && staff.userId !== requesterId) {
+    throw new ForbiddenException('You can only edit your own profile.');
+  }
+
+  // Update staff profile fields
+  await this.prisma.staffProfile.update({
+    where: { id: staffProfileId },
+    data: {
+      ...(dto.firstName && { firstName: dto.firstName }),
+      ...(dto.lastName && { lastName: dto.lastName }),
+      ...(dto.middleName !== undefined && { middleName: dto.middleName }),
+      ...(dto.phone !== undefined && { phone: dto.phone }),
+    },
+  });
+
+  // Update user email / password
+  const userUpdate: any = {};
+  if (dto.email) userUpdate.email = dto.email;
+  if (dto.password) userUpdate.passwordHash = await argon2.hash(dto.password);
+
+  if (Object.keys(userUpdate).length > 0) {
+    await this.prisma.user.update({
+      where: { id: staff.userId },
+      data: userUpdate,
+    });
+  }
+
+  return this.prisma.staffProfile.findUnique({
+    where: { id: staffProfileId },
+    include: { user: { select: { id: true, email: true, role: true } }, department: true },
+  });
+}
+
+async updateStudentProfile(
+  studentProfileId: string,
+  dto: {
+    firstName?: string;
+    lastName?: string;
+    middleName?: string;
+    dateOfBirth?: string;
+    email?: string;
+    password?: string;
+  },
+  requesterId: string,
+  requesterRole: Role,
+) {
+  const student = await this.prisma.studentProfile.findUniqueOrThrow({
+    where: { id: studentProfileId },
+    include: {
+      user: true,
+      currentClass: true,
+    },
+  });
+
+  // HOD: can edit students in their department's classes
+  if (requesterRole === Role.HOD) {
+    const requester = await this.prisma.staffProfile.findFirst({
+      where: { userId: requesterId },
+      select: { departmentId: true },
+    });
+    const deptSubjects = await this.prisma.subject.findMany({
+      where: { departmentId: requester?.departmentId ?? '' },
+      select: { id: true },
+    });
+    const deptAssignments = await this.prisma.teachingAssignment.findMany({
+      where: { subjectId: { in: deptSubjects.map(s => s.id) } },
+      select: { classSectionId: true },
+    });
+    const allowedClassIds = [...new Set(deptAssignments.map(a => a.classSectionId))];
+    if (!allowedClassIds.includes(student.currentClassId ?? '')) {
+      throw new ForbiddenException('This student is not in your department\'s classes.');
+    }
+  }
+
+  // Teacher cannot edit student profiles
+  if (requesterRole === Role.TEACHER) {
+    throw new ForbiddenException('Teachers cannot edit student profiles.');
+  }
+
+  await this.prisma.studentProfile.update({
+    where: { id: studentProfileId },
+    data: {
+      ...(dto.firstName && { firstName: dto.firstName }),
+      ...(dto.lastName && { lastName: dto.lastName }),
+      ...(dto.middleName !== undefined && { middleName: dto.middleName }),
+      ...(dto.dateOfBirth !== undefined && { dateOfBirth: new Date(dto.dateOfBirth) }),
+    },
+  });
+
+  const userUpdate: any = {};
+  if (dto.email) userUpdate.email = dto.email;
+  if (dto.password) userUpdate.passwordHash = await argon2.hash(dto.password);
+  if (Object.keys(userUpdate).length > 0) {
+    await this.prisma.user.update({
+      where: { id: student.userId },
+      data: userUpdate,
+    });
+  }
+
+  return this.prisma.studentProfile.findUnique({
+    where: { id: studentProfileId },
+    include: { user: { select: { id: true, email: true } }, currentClass: true },
+  });
+}
+
+async getMyProfile(userId: string) {
+  const user = await this.prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    include: {
+      staffProfile: { include: { department: true } },
+      studentProfile: { include: { currentClass: true, department: true } },
+    },
+  });
+  return user;
+}
 
   async getAllStudents(user?: { id: string; role: Role }, classId?: string) {
 
