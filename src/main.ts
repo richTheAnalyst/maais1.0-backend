@@ -22,13 +22,11 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       'https://maais-frontend.vercel.app',
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'http://localhost:5175',
-      'http://localhost:4173',
-      'http://localhost:3000',
+      'http://localhost:3000', // optional, for local development
+      'http://localhost:5173', // if you use Vite
     ],
-    credentials: true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true, // if you need to send cookies or auth headers
   });
 
   // Swagger
