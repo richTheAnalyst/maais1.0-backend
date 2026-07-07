@@ -21,16 +21,15 @@ async function bootstrap() {
   // CORS
   app.enableCors({
     origin: [
-      process.env.FRONTEND_URL,
+      'https://maais-frontend.vercel.app',
       'http://localhost:5173',
       'http://localhost:5174',
       'http://localhost:5175',
       'http://localhost:4173',
       'http://localhost:3000',
-    ].filter(Boolean),
+    ],
     credentials: true,
   });
-  
 
   // Swagger
   const config = new DocumentBuilder()
@@ -50,7 +49,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document, {
     swaggerOptions: { persistAuthorization: true },
-  })
+  });
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
