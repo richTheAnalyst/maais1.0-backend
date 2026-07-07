@@ -69,34 +69,34 @@ export class UsersController {
   }
 
   @Get('me')
-@ApiOperation({ summary: 'Get current user full profile' })
-getMyProfile(@CurrentUser('id') userId: string) {
-  return this.usersService.getMyProfile(userId);
-}
+  @ApiOperation({ summary: 'Get current user full profile' })
+  getMyProfile(@CurrentUser('id') userId: string) {
+    return this.usersService.getMyProfile(userId);
+  }
 
-@Patch('staff/:id/profile')
-@Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD, Role.TEACHER)
-@ApiOperation({ summary: 'Update a staff member profile' })
-updateStaffProfile(
-  @Param('id') id: string,
-  @Body() dto: any,
-  @CurrentUser('id') requesterId: string,
-  @CurrentUser('role') role: Role,
-) {
-  return this.usersService.updateStaffProfile(id, dto, requesterId, role);
-}
+  @Patch('staff/:id/profile')
+  @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD, Role.TEACHER)
+  @ApiOperation({ summary: 'Update a staff member profile' })
+  updateStaffProfile(
+    @Param('id') id: string,
+    @Body() dto: any,
+    @CurrentUser('id') requesterId: string,
+    @CurrentUser('role') role: Role,
+  ) {
+    return this.usersService.updateStaffProfile(id, dto, requesterId, role);
+  }
 
-@Patch('students/:id/profile')
-@Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
-@ApiOperation({ summary: 'Update a student profile' })
-updateStudentProfile(
-  @Param('id') id: string,
-  @Body() dto: any,
-  @CurrentUser('id') requesterId: string,
-  @CurrentUser('role') role: Role,
-) {
-  return this.usersService.updateStudentProfile(id, dto, requesterId, role);
-}
+  @Patch('students/:id/profile')
+  @Roles(Role.SUPER_ADMIN, Role.HEADMASTER, Role.HOD)
+  @ApiOperation({ summary: 'Update a student profile' })
+  updateStudentProfile(
+    @Param('id') id: string,
+    @Body() dto: any,
+    @CurrentUser('id') requesterId: string,
+    @CurrentUser('role') role: Role,
+  ) {
+    return this.usersService.updateStudentProfile(id, dto, requesterId, role);
+  }
 
   @Delete(':id/deactivate')
   @Roles(Role.SUPER_ADMIN, Role.HEADMASTER)
