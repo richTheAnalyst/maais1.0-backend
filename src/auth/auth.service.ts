@@ -57,9 +57,16 @@ export class AuthService {
     return this.login(user);
   }
 
-  async logout(userId: string, token: string) {
-    await this.prisma.refreshToken.deleteMany({ where: { userId, token } });
-    return { success: true };
+  async logout(userId: string | undefined, token: string) {
+    if (!userId) {
+      // Token already expired — nothing to invalidate server-side
+      return { message: 'Logged out' };
+    }
+    // existing logic to invalidate refresh token...
+    await this.prisma.refreshToken.deleteMany({
+      where: { userId, token },
+    });
+    return { message: 'Logged out successfully' };
   }
 
   private async signAccessToken(id: string, email: string, role: string) {

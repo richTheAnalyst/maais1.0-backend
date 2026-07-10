@@ -45,13 +45,14 @@ export class AuthController {
     return this.authService.refreshTokens(dto.userId, dto.refreshToken);
   }
 
-  @ApiBearerAuth()
   @Post('logout')
-  @HttpCode(HttpStatus.OK)
+  @Public() 
+  @HttpCode(200)
   @ApiOperation({ summary: 'Logout and invalidate refresh token' })
   async logout(@CurrentUser() user: User, @Body('refreshToken') token: string) {
-    return this.authService.logout(user.id, token);
+    return this.authService.logout(user?.id, token);
   }
+
   @ApiBearerAuth()
   @Get('me')
   @ApiOperation({ summary: 'Get current authenticated user with profile' })
